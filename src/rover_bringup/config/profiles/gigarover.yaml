@@ -11,7 +11,8 @@ components:
   web: true
   rosboard: true
 
-  imu: false
+  # Yahboom YB-MRA02 на CH340 (воткнута 28.07.2026 вместо мёртвого CAN-адаптера)
+  imu: true
   lidar: false
   camera: true
   vision: false
