@@ -1,0 +1,25 @@
+profile:
+  name: gigarover_navigation
+  description: GIGAROVER with lidar and Nav2 autonomous navigation.
+
+components:
+  base: true
+  odometry: true
+  description: true
+  localization: true
+  twist_mux: true
+  web: true
+  rosboard: true
+  lidar: true
+  nav2: true
+
+  imu: false
+  camera: false
+  vision: false
+  slam: false
+  led_strip: false
+  octoliner: false
+  waveshare_audio: false
+  display: false
+  agent: false
+  fleet_bridge: false

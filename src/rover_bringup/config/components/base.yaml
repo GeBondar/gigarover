@@ -1,0 +1,74 @@
+base_driver:
+  baudrate: 115200
+  cmd_vel_topic: /cmd_vel
+  control_rate_hz: 50.0
+  command_timeout_sec: 0.5
+  feedback_timeout_sec: 0.35
+  max_wheel_speed_mps: 0.35
+  hold_position_on_zero_cmd: true
+  stale_brake_hold_sec: 0.35
+  max_accel_x_mps2: 0.8
+  max_decel_x_mps2: 1.2
+  max_accel_y_mps2: 0.6
+  max_decel_y_mps2: 0.9
+  max_accel_z_radps2: 2.0
+  max_decel_z_radps2: 3.0
+  max_jerk_x_mps3: 4.0
+  max_jerk_y_mps3: 3.0
+  max_jerk_z_radps3: 8.0
+
+# Значения по умолчанию VESC-драйвера (GIGAROVER); совпадают с дефолтами узла.
+# Робот-конфиг (base_driver:) и ~/rover_config/motors.yaml перекрывают их.
+# Штатный режим (type: vesc) — мост vesc_bridge_node к демону rover-motord:
+# он использует только topics/motord_*; can_*/wheel_* нужны легаси-режиму
+# vesc_direct (и читаются самим демоном из своих конфигов).
+vesc_driver:
+  motord_host: 127.0.0.1
+  motord_port: 8460
+  state_timeout_sec: 1.0
+  can_interface: seeedstudio
+  can_channel: ''      # ''=автопоиск адаптера CH340 (VID:PID 1a86:7523)
+  can_bitrate: 500000
+  cmd_vel_topic: /cmd_vel
+  encoders_topic: /wheel/encoders
+  battery_topic: /battery/state
+  diagnostics_topic: /diagnostics
+  control_rate_hz: 50.0
+  command_timeout_sec: 0.5
+  feedback_timeout_sec: 0.35
+  # Порядок колёс: FL, FR, RL, RR.
+  wheel_can_ids: [57, 25, 92, 71]
+  wheel_inverts: [true, true, false, false]
+  wheel_radius_m: 0.0825
+  track_width_m: 0.40
+  wheelbase_m: 0.50
+  gear_ratio: 3.0
+  motor_pole_pairs: 7
+  max_erpm: 4000
+  max_wheel_speed_mps: 1.6
+  max_wheel_accel_mps2: 1.5
+  idle_mode: coast
+  battery_cells: 6
+
+wheel_odometry:
+  encoder_topic: /wheel/encoders
+  odometry_topic: /wheel/odometry
+  odom_frame_id: odom
+  base_frame_id: base_link
+  max_sample_gap_sec: 0.5
+  max_plausible_wheel_speed_mps: 1.5
+  pose_covariance_diagonal:
+  - 0.03
+  - 0.08
+  - 999.0
+  - 999.0
+  - 999.0
+  - 0.15
+  twist_covariance_diagonal:
+  - 0.02
+  - 0.06
+  - 999.0
+  - 999.0
+  - 999.0
+  - 0.12
+

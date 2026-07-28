@@ -1,0 +1,36 @@
+# GIGAROVER rover-motord: постоянный демон ходовой (владелец USB-CAN).
+# Работает всегда, независимо от ROS-стека: rover-bringup лишь мост к нему.
+# Conflicts= с setup-web и can-teleop — они открывают тот же адаптер;
+# After= упорядочивает передачу владения (сначала полная остановка, потом старт).
+[Unit]
+Description=GIGAROVER motor daemon (VESC/CAN owner, no ROS)
+After=network-online.target rover-setup-web.service rover-can-teleop.service
+Wants=network-online.target
+Conflicts=rover-setup-web.service rover-can-teleop.service
+
+[Service]
+# Type=notify + WatchdogSec: демон шлёт READY/WATCHDOG сам (sd_notify в
+# motord.py); зависший процесс systemd перезапустит.
+Type=notify
+NotifyAccess=main
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/rover_ws/tools/motord
+EnvironmentFile=-/etc/default/rover-bringup
+# Доп. флаги (например MOTORD_OPTS="--stats 60") — в /etc/default/rover-bringup.
+ExecStart=/usr/bin/python3 /home/ubuntu/rover_ws/tools/motord/motord.py $MOTORD_OPTS
+Restart=always
+RestartSec=2
+# SIGINT -> KeyboardInterrupt -> коаст всем моторам перед выходом.
+KillSignal=SIGINT
+TimeoutStopSec=10
+WatchdogSec=15
+# Контур 50 Гц не делит такт с DDS/Nav2: реальное время + большие ядра A76
+# (cpu4-7 на RK3588S). Если старт падает именно на этих директивах (ядро без
+# RT-планировщика) — закомментируйте CPUScheduling* и перезапустите.
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+CPUAffinity=4 5 6 7
+
+[Install]
+WantedBy=multi-user.target

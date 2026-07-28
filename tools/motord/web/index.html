@@ -1,0 +1,455 @@
+<!doctype html>
+<!-- GIGAROVER: аварийный телеоп rover-motord (демон ходовой, без ROS).
+     Самодостаточная страница: никаких внешних библиотек, весь CSS/JS
+     инлайном — отдаётся motord.py. Джойстик шлёт POST /api/drive/command
+     10 Гц (src=web, перехватывает управление у ROS), сервер глушит моторы
+     сам (deadman 0.5 с), так что обрыв Wi-Fi безопасен. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>GIGAROVER · motord телеоп</title>
+<style>
+  :root {
+    --bg: #0b0f14; --card: #141b24; --card2: #1b2430; --line: #24303e;
+    --text: #e8eef5; --muted: #8fa1b3; --accent: #4da3ff;
+    --ok: #3ddc84; --warn: #ffb020; --err: #ff5252;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    user-select: none; -webkit-user-select: none; touch-action: manipulation;
+    overscroll-behavior: none;
+  }
+  #layout {
+    display: grid; grid-template-columns: 1fr; gap: 10px;
+    max-width: 1000px; margin: 0 auto; padding: 10px;
+  }
+  @media (min-width: 700px) and (orientation: landscape) {
+    #layout { grid-template-columns: 1fr 1.1fr; align-items: start; }
+    #joysection { position: sticky; top: 10px; }
+  }
+
+  header {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 10px 14px;
+  }
+  #linkdot { width: 12px; height: 12px; border-radius: 50%; background: var(--err); flex: none; }
+  #linkdot.ok { background: var(--ok); } #linkdot.warn { background: var(--warn); }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .5px; flex: 1 1 auto; }
+  header h1 small { color: var(--muted); font-weight: 400; font-size: 11px; display: block; }
+  #battery { text-align: right; line-height: 1.25; }
+  #battv { font-size: 17px; font-weight: 600; }
+  #battsub { font-size: 11px; color: var(--muted); }
+
+  #statusline {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 7px 12px; font-size: 12px; color: var(--muted);
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  #statusline b { color: var(--text); font-weight: 600; }
+  #statusline .st-move { color: var(--ok); }
+  #statusline .st-coast { color: var(--muted); }
+  #statusline .st-stop { color: var(--err); font-weight: 700; }
+  #offline {
+    display: none; background: #3a1420; border: 1px solid var(--err);
+    color: #ffb3b3; border-radius: 10px; padding: 8px 12px; font-size: 13px;
+  }
+  #offline.show { display: block; }
+
+  #wheels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wheel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 8px 10px; min-height: 66px;
+  }
+  .wheel.stale { border-color: var(--err); opacity: .65; }
+  .wheel .tag { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
+  .wheel .mps { font-size: 19px; font-weight: 650; margin: 1px 0; }
+  .wheel .sub { font-size: 11px; color: var(--muted); }
+  .wheel .sub b { color: var(--text); font-weight: 550; }
+
+  #joysection { display: flex; flex-direction: column; gap: 10px; }
+  #joywrap { display: flex; justify-content: center; padding: 4px 0; }
+  #joy {
+    --size: min(84vw, 44vh, 420px);
+    width: var(--size); height: var(--size); border-radius: 50%;
+    background: radial-gradient(circle at 50% 45%, var(--card2), var(--card) 75%);
+    border: 1px solid var(--line); position: relative; touch-action: none;
+    box-shadow: inset 0 0 30px rgba(0,0,0,.45);
+  }
+  #joy::before, #joy::after {
+    content: ''; position: absolute; background: var(--line);
+  }
+  #joy::before { left: 50%; top: 6%; bottom: 6%; width: 1px; }
+  #joy::after { top: 50%; left: 6%; right: 6%; height: 1px; }
+  #knob {
+    position: absolute; width: 34%; height: 34%; border-radius: 50%;
+    left: 33%; top: 33%;
+    background: radial-gradient(circle at 38% 32%, #6db4ff, var(--accent) 70%);
+    box-shadow: 0 4px 14px rgba(0,0,0,.55); border: 1px solid #7cb8ff;
+    transition: left .12s, top .12s; will-change: left, top; z-index: 2;
+  }
+  #joy.active #knob { transition: none; }
+  .joyhint {
+    position: absolute; color: var(--muted); font-size: 10px; z-index: 1;
+    left: 50%; transform: translateX(-50%);
+  }
+  .joyhint.top { top: 8px; } .joyhint.bottom { bottom: 8px; }
+
+  .slider {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 9px 14px; display: flex; align-items: center; gap: 12px; font-size: 13px;
+  }
+  .slider label { flex: none; width: 74px; color: var(--muted); }
+  .slider output { flex: none; width: 76px; text-align: right; font-weight: 600; }
+  .slider input[type=range] { flex: 1 1 auto; accent-color: var(--accent); height: 28px; }
+
+  #stopbtn {
+    background: linear-gradient(180deg, #ff5a5a, #d92626);
+    border: 1px solid #ff7a7a; color: #fff; font-size: 20px; font-weight: 800;
+    letter-spacing: 2px; border-radius: 14px; padding: 15px; width: 100%;
+    cursor: pointer; box-shadow: 0 4px 16px rgba(217,38,38,.35);
+  }
+  #stopbtn:active, #stopbtn.held { transform: scale(.98); filter: brightness(1.2); }
+
+  footer { text-align: center; font-size: 11px; color: var(--muted); padding: 2px 0 8px; }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(20px); background: var(--card2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 10px;
+    padding: 9px 16px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity .2s, transform .2s; max-width: 90vw; z-index: 10;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { border-color: var(--err); color: #ffc4c4; }
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="leftcol" style="display:flex; flex-direction:column; gap:10px;">
+    <header>
+      <div id="linkdot"></div>
+      <h1>GIGAROVER <small>motord · прямой телеоп (приоритет над ROS)</small></h1>
+      <div id="battery">
+        <div id="battv">— В</div>
+        <div id="battsub">нет данных</div>
+      </div>
+    </header>
+    <div id="offline">Нет связи с ровером — команды не доходят. Моторы заглушит deadman.</div>
+    <div id="statusline"><span>подключение…</span></div>
+    <div id="wheels">
+      <div class="wheel stale" id="w-front_left"><div class="tag"><span>FL · перед-лев</span><span class="hz"></span></div><div class="mps">—</div><div class="sub"></div></div>
+      <div class="wheel stale" id="w-front_right"><div class="tag"><span>FR · перед-прав</span><span class="hz"></span></div><div class="mps">—</div><div class="sub"></div></div>
+      <div class="wheel stale" id="w-rear_left"><div class="tag"><span>RL · зад-лев</span><span class="hz"></span></div><div class="mps">—</div><div class="sub"></div></div>
+      <div class="wheel stale" id="w-rear_right"><div class="tag"><span>RR · зад-прав</span><span class="hz"></span></div><div class="mps">—</div><div class="sub"></div></div>
+    </div>
+    <div class="slider">
+      <label for="lin">Скорость</label>
+      <input id="lin" type="range" min="0.10" max="1.50" step="0.05" value="0.50">
+      <output id="linout">0.50 м/с</output>
+    </div>
+    <div class="slider">
+      <label for="ang">Поворот</label>
+      <input id="ang" type="range" min="0.30" max="3.00" step="0.10" value="1.00">
+      <output id="angout">1.00 рад/с</output>
+    </div>
+    <button id="stopbtn" type="button">STOP</button>
+    <footer>
+      WASD / стрелки — движение · пробел — STOP ·
+      <a href="/api/status" target="_blank" rel="noopener">API /api/status</a>
+    </footer>
+  </div>
+
+  <div id="joysection">
+    <div id="joywrap">
+      <div id="joy">
+        <span class="joyhint top">вперёд</span>
+        <span class="joyhint bottom">назад</span>
+        <div id="knob"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = (sel) => document.querySelector(sel);
+const SEND_PERIOD_MS = 100;      // 10 Гц; deadman сервера 0.5 с
+const POLL_PERIOD_MS = 1000;
+
+const state = {
+  nx: 0, ny: 0,                  // джойстик: право+ / верх+
+  keys: new Set(),
+  joyActive: false,
+  lastSentZero: true,
+  offline: false,
+  wakeLock: null,
+};
+
+function fmt(v, digits = 2) {
+  return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : '—';
+}
+
+function showToast(text, isError = false) {
+  const toast = $('#toast');
+  toast.textContent = text;
+  toast.className = 'show' + (isError ? ' err' : '');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { toast.className = ''; }, 2200);
+}
+
+// ---- отправка команд -------------------------------------------------------
+async function post(path, body) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 800);
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: ctl.signal,
+    });
+    return res.ok;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function currentCommand() {
+  // клавиатура поверх джойстика (что активнее, то и рулит)
+  let nx = state.nx, ny = state.ny;
+  if (!state.joyActive && state.keys.size > 0) {
+    ny = (state.keys.has('up') ? 1 : 0) - (state.keys.has('down') ? 1 : 0);
+    nx = (state.keys.has('right') ? 1 : 0) - (state.keys.has('left') ? 1 : 0);
+  }
+  const maxLin = parseFloat($('#lin').value);
+  const maxAng = parseFloat($('#ang').value);
+  // ROS-конвенция: angular.z > 0 — поворот влево (CCW), поэтому право = минус.
+  return { linear_x: ny * maxLin, angular_z: -nx * maxAng };
+}
+
+async function sendDrive() {
+  const cmd = currentCommand();
+  const isZero = cmd.linear_x === 0 && cmd.angular_z === 0;
+  if (isZero && state.lastSentZero) return;
+  try {
+    await post('/api/drive/command', cmd);
+    state.lastSentZero = isZero;
+  } catch (e) { /* offline-баннер обновит поллинг */ }
+}
+
+async function sendStop(hard) {
+  state.nx = 0; state.ny = 0; state.keys.clear();
+  drawKnob(0, 0);
+  try {
+    if (hard) await post('/api/stop', {});
+    await post('/api/drive/stop', {});
+    state.lastSentZero = true;
+  } catch (e) { /* ignore */ }
+}
+
+setInterval(sendDrive, SEND_PERIOD_MS);
+
+// ---- джойстик --------------------------------------------------------------
+const joy = $('#joy'), knob = $('#knob');
+
+function drawKnob(nx, ny) {
+  // knob 34% — центр смещается максимум на 33% от размера поля
+  const range = 33;
+  knob.style.left = (33 + nx * range) + '%';
+  knob.style.top = (33 - ny * range) + '%';
+}
+
+function joyVector(ev) {
+  const rect = joy.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  let nx = (ev.clientX - cx) / (rect.width / 2);
+  let ny = (cy - ev.clientY) / (rect.height / 2);
+  const len = Math.hypot(nx, ny);
+  if (len > 1) { nx /= len; ny /= len; }
+  if (Math.abs(nx) < 0.07) nx = 0;   // мёртвая зона по осям
+  if (Math.abs(ny) < 0.07) ny = 0;
+  return { nx, ny };
+}
+
+joy.addEventListener('pointerdown', (ev) => {
+  ev.preventDefault();
+  joy.setPointerCapture(ev.pointerId);
+  joy.classList.add('active');
+  state.joyActive = true;
+  const v = joyVector(ev);
+  state.nx = v.nx; state.ny = v.ny;
+  drawKnob(v.nx, v.ny);
+  sendDrive();
+  acquireWakeLock();
+});
+joy.addEventListener('pointermove', (ev) => {
+  if (!state.joyActive) return;
+  ev.preventDefault();
+  const v = joyVector(ev);
+  state.nx = v.nx; state.ny = v.ny;
+  drawKnob(v.nx, v.ny);
+});
+function joyRelease(ev) {
+  if (!state.joyActive) return;
+  ev.preventDefault();
+  state.joyActive = false;
+  joy.classList.remove('active');
+  state.nx = 0; state.ny = 0;
+  drawKnob(0, 0);
+  sendStop(false);
+}
+joy.addEventListener('pointerup', joyRelease);
+joy.addEventListener('pointercancel', joyRelease);
+
+// ---- клавиатура ------------------------------------------------------------
+const KEYMAP = {
+  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+};
+window.addEventListener('keydown', (ev) => {
+  if (ev.repeat) return;
+  if (ev.code === 'Space') { ev.preventDefault(); doHardStop(); return; }
+  const dir = KEYMAP[ev.code];
+  if (!dir) return;
+  ev.preventDefault();
+  state.keys.add(dir);
+  sendDrive();
+});
+window.addEventListener('keyup', (ev) => {
+  const dir = KEYMAP[ev.code];
+  if (!dir) return;
+  state.keys.delete(dir);
+  if (state.keys.size === 0) sendStop(false); else sendDrive();
+});
+
+// ---- STOP ------------------------------------------------------------------
+async function doHardStop() {
+  const btn = $('#stopbtn');
+  btn.classList.add('held');
+  setTimeout(() => btn.classList.remove('held'), 750);
+  await sendStop(true);
+  showToast('STOP отправлен — коаст, блокировка 0.75 с', true);
+}
+$('#stopbtn').addEventListener('pointerdown', (ev) => { ev.preventDefault(); doHardStop(); });
+
+// ---- слайдеры --------------------------------------------------------------
+function bindSlider(id, outId, unit, storeKey) {
+  const input = $(id), out = $(outId);
+  const saved = localStorage.getItem(storeKey);
+  if (saved !== null && !isNaN(parseFloat(saved))) input.value = saved;
+  const render = () => { out.textContent = parseFloat(input.value).toFixed(2) + ' ' + unit; };
+  input.addEventListener('input', () => { render(); localStorage.setItem(storeKey, input.value); });
+  render();
+}
+bindSlider('#lin', '#linout', 'м/с', 'canteleop.maxlin');
+bindSlider('#ang', '#angout', 'рад/с', 'canteleop.maxang');
+
+// ---- статус ----------------------------------------------------------------
+function renderWheel(name, w) {
+  const el = $('#w-' + name);
+  if (!w) return;
+  el.classList.toggle('stale', !w.fresh);
+  el.querySelector('.hz').textContent = w.fresh ? fmt(w.status1_hz, 0) + ' Гц' : 'нет данных';
+  el.querySelector('.mps').textContent = w.fresh ? fmt(w.measured_mps, 2) + ' м/с' : '—';
+  el.querySelector('.sub').innerHTML = w.fresh
+    ? `<b>${fmt(w.erpm, 0)}</b> eRPM · <b>${fmt(w.temp_fet, 0)}</b>°C · <b>${fmt(w.motor_current, 1)}</b> А`
+    : `id ${w.can_id} · возраст ${w.age_ms == null ? '∞' : w.age_ms + ' мс'}`;
+}
+
+function renderStatus(s) {
+  const dot = $('#linkdot');
+  dot.className = s.link_ok ? 'ok' : (s.can.connected ? 'warn' : '');
+
+  const b = s.battery;
+  $('#battv').textContent = b.present ? fmt(b.voltage, 1) + ' В' : '— В';
+  $('#battsub').textContent = b.present
+    ? (b.percentage != null ? Math.round(b.percentage * 100) + '% · ' : '') + fmt(b.power_w, 0) + ' Вт'
+    : 'нет данных';
+
+  let driveState, driveClass;
+  if (s.drive.stop_hold) { driveState = 'СТОП-БЛОКИРОВКА'; driveClass = 'st-stop'; }
+  else if (s.drive.deadman) { driveState = 'выбег (нет команд)'; driveClass = 'st-coast'; }
+  else { driveState = 'движение'; driveClass = 'st-move'; }
+
+  const canText = s.can.connected
+    ? `CAN <b>${s.can.channel || '?'}</b>`
+    : `CAN <b class="st-stop">нет линка</b>${s.can.last_error ? ' · ' + s.can.last_error : ''}`;
+  $('#statusline').innerHTML =
+    `<span>${canText}</span>` +
+    `<span class="${driveClass}">${driveState}</span>` +
+    `<span>цель ${fmt(s.drive.command.linear_x, 2)} м/с · ${fmt(s.drive.command.angular_z, 2)} рад/с</span>`;
+
+  for (const name of ['front_left', 'front_right', 'rear_left', 'rear_right']) {
+    renderWheel(name, s.wheels[name]);
+  }
+}
+
+let firstStatus = true;
+async function pollStatus() {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 900);
+  try {
+    const res = await fetch('/api/status', { signal: ctl.signal, cache: 'no-store' });
+    const s = await res.json();
+    state.offline = false;
+    $('#offline').classList.remove('show');
+    if (firstStatus) {
+      firstStatus = false;
+      // подтянуть серверные лимиты в диапазоны слайдеров
+      $('#lin').max = s.limits.linear_x;
+      $('#ang').max = s.limits.angular_z;
+      if (!localStorage.getItem('canteleop.maxlin')) $('#lin').value = s.defaults.linear_x;
+      if (!localStorage.getItem('canteleop.maxang')) $('#ang').value = s.defaults.angular_z;
+      $('#lin').dispatchEvent(new Event('input'));
+      $('#ang').dispatchEvent(new Event('input'));
+    }
+    renderStatus(s);
+  } catch (e) {
+    state.offline = true;
+    $('#offline').classList.add('show');
+    $('#linkdot').className = '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+setInterval(pollStatus, POLL_PERIOD_MS);
+pollStatus();
+
+// ---- wake lock и сворачивание ---------------------------------------------
+async function acquireWakeLock() {
+  try {
+    if ('wakeLock' in navigator && !state.wakeLock) {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+    }
+  } catch (e) { /* не критично */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    sendStop(false);                 // страница ушла в фон — остановиться
+  } else {
+    acquireWakeLock();
+    pollStatus();
+  }
+});
+window.addEventListener('pagehide', () => {
+  // последний шанс: keepalive-запрос переживает закрытие вкладки
+  try {
+    navigator.sendBeacon && navigator.sendBeacon('/api/drive/stop', new Blob(['{}'], { type: 'application/json' }));
+  } catch (e) { /* deadman подстрахует */ }
+});
+</script>
+</body>
+</html>

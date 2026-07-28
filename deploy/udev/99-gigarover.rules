@@ -1,0 +1,7 @@
+# GIGAROVER: USB-CAN адаптер на CH340 (протокол seeedstudio) — шина VESC.
+# Стабильный симлинк /dev/rover_can, доступ без root, и запрет ModemManager
+# опрашивать порт (иначе он "дёргает" адаптер при подключении).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="rover_can", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
+# Запрет USB-автосна для адаптера: runtime-suspend посреди обмена даёт
+# провалы приёма/передачи на ch341.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", ATTR{power/control}="on"

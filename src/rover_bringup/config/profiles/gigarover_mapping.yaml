@@ -1,0 +1,25 @@
+profile:
+  name: gigarover_mapping
+  description: GIGAROVER with lidar and SLAM Toolbox for map building.
+
+components:
+  base: true
+  odometry: true
+  description: true
+  localization: true
+  twist_mux: true
+  web: true
+  rosboard: true
+  lidar: true
+  slam: true
+
+  imu: false
+  camera: false
+  vision: false
+  nav2: false
+  led_strip: false
+  octoliner: false
+  waveshare_audio: false
+  display: false
+  agent: false
+  fleet_bridge: false

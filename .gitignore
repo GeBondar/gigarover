@@ -1,0 +1,23 @@
+# Артефакты сборки colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Логи и телеметрия
+*.log
+can_telemetry*.csv
+
+# Конфиги, генерируемые на роботе (экспорт rover-setup-web)
+# — истина живёт в ~/rover_config на самом ровере
+/rover_config/
+src/rover_setup_web/rover_setup_web/setup_state.json
+
+# Редакторы
+.vscode/
+.idea/

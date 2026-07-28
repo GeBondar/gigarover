@@ -1,0 +1,90 @@
+# GIGAROVER v1 — конфигурация робота (4x VESC на общей CAN-шине, skid-steer).
+# Все значения с пометкой "калибровка" — первичная прикидка, уточняются на роботе.
+
+robot:
+  id: gigarover-01
+  hostname: gigarover-01
+  company: Сверх
+  model: gigarover-v1
+  serial_number: GGR-0001
+  software_version: 0.1.0
+  web_interface_version: 0.1.0
+
+geometry:
+  # Геометрия шасси — калибровка: перемерить на собранном роботе.
+  wheel_radius_m: 0.0825
+  wheel_width_m: 0.05
+  wheelbase_m: 0.50
+  track_width_m: 0.40
+  chassis_length_m: 0.45
+  chassis_width_m: 0.45
+  chassis_height_m: 0.12
+  chassis_xyz:
+  - 0.0
+  - 0.0
+  - 0.0
+  # Позиция IMU — калибровка: задать после физической установки датчика.
+  imu_xyz:
+  - 0.0
+  - 0.0
+  - 0.0
+  imu_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  # Позиция лидара — калибровка: задать после физической установки.
+  lidar_xyz:
+  - 0.0
+  - 0.0
+  - 0.15
+  lidar_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+
+encoders:
+  # Единый источник правды для драйвера и колёсной одометрии.
+  # encoder_lines = 6 x motor_pole_pairs (VESC-тахометр: 6 отсчётов на
+  # электрический оборот), reduction_ratio = gear_ratio (ремень HTD-5M),
+  # quadrature_factor всегда 1.0 для VESC.
+  encoder_lines: 42.0
+  reduction_ratio: 3.0
+  quadrature_factor: 1.0
+
+base_driver:
+  type: vesc
+  can_interface: seeedstudio
+  can_channel: ''      # ''=автопоиск CH340; перекрывается ~/rover_config/motors.yaml
+  can_bitrate: 500000
+  # Порядок колёс: FL, FR, RL, RR. Значения со стенда; перекрываются motors.yaml.
+  wheel_can_ids: [57, 25, 92, 71]
+  wheel_inverts: [true, true, false, false]
+  max_erpm: 4000
+  max_wheel_speed_mps: 1.6
+  max_wheel_accel_mps2: 1.5
+  idle_mode: coast
+  battery_cells: 6
+
+wheel_odometry:
+  x_multiplier: 1.0
+  y_multiplier: 1.0
+  yaw_multiplier: 1.0  # калибровка: yaw_multiplier калибруется на скиде (вращение на месте)
+  # Должно быть выше max_wheel_speed_mps драйвера (1.6), иначе на полной
+  # скорости одометрия отбрасывает валидные отсчёты энкодеров.
+  max_plausible_wheel_speed_mps: 2.0
+
+imu:
+  # Калибровка: проверить оси после установки IMU.
+  axis_map:
+  - 0
+  - 1
+  - 2
+  axis_signs:
+  - 1
+  - 1
+  - 1
+
+navigation:
+  # Первичная прикидка параметров навигации под шасси 0.45 м.
+  nav2_params_file: navigation/nav2_params_gigarover.yaml
+  slam_params_file: navigation/slam_toolbox_params_gigarover.yaml

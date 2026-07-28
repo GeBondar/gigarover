@@ -1,0 +1,26 @@
+[Unit]
+Description=GIGAROVER first-run VESC setup web app (port 127.0.0.1:5000)
+# After=rover-bringup/rover-motord: Conflicts= alone carries no ordering, so
+# the stop of the CAN owner and our start would run concurrently (two writers
+# on the same USB-CAN adapter). With an ordering dependency systemd always
+# finishes the stop before the start, in both handover directions.
+# rover-motord is the standing CAN owner now; bringup is stopped as well so
+# its bridge does not fight the setup flow over motors.yaml.
+After=network-online.target rover-bringup.service rover-motord.service
+Wants=network-online.target
+Conflicts=rover-bringup.service rover-motord.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/rover_ws
+EnvironmentFile=-/etc/default/rover-bringup
+ExecStart=/bin/bash -lc 'set -e; cd "${ROVER_WS:-.}"; source /opt/ros/jazzy/setup.bash; source install/setup.bash; exec ros2 run rover_setup_web setup_web'
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

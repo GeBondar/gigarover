@@ -1,0 +1,28 @@
+# GIGAROVER: запасной телеоп по CAN без ROS (can_teleop.py).
+# Conflicts= гарантирует единственного владельца USB-CAN адаптера:
+# запуск этого юнита сам останавливает rover-bringup/rover-setup-web
+# (и наоборот). After= упорядочивает: сначала их полная остановка,
+# потом наш старт.
+[Unit]
+Description=GIGAROVER standalone CAN teleop (fallback, no ROS)
+# Заморожённый фолбэк: штатно ходовой владеет rover-motord (tools/motord),
+# у которого свой аварийный телеоп на :8767. Этот юнит — последний резерв.
+After=network-online.target rover-bringup.service rover-setup-web.service rover-motord.service
+Wants=network-online.target
+Conflicts=rover-bringup.service rover-setup-web.service rover-motord.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/rover_ws/tools/can_teleop
+EnvironmentFile=-/etc/default/rover-bringup
+ExecStart=/usr/bin/python3 /home/ubuntu/rover_ws/tools/can_teleop/can_teleop.py
+Restart=on-failure
+RestartSec=3
+# SIGINT -> KeyboardInterrupt -> коаст всем моторам перед выходом.
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

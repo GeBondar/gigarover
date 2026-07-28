@@ -1,0 +1,28 @@
+vesc_driver_node:
+  ros__parameters:
+    can_interface: seeedstudio
+    can_channel: ''                  # ''=автопоиск CH340 (VID:PID 1a86:7523); иначе /dev/ttyUSB0
+    can_bitrate: 500000
+    cmd_vel_topic: /cmd_vel
+    encoders_topic: /wheel/encoders
+    battery_topic: /battery/state
+    diagnostics_topic: /diagnostics
+    control_rate_hz: 50.0
+    command_timeout_sec: 0.5
+    feedback_timeout_sec: 0.35
+    # Порядок колёс везде: FL, FR, RL, RR.
+    # Значения берутся из motors.yaml (экспорт rover-setup-web) — проверить на своей сборке.
+    wheel_can_ids: [57, 25, 92, 71]
+    wheel_inverts: [true, true, false, false]
+    # Геометрия — откалибровать по месту.
+    wheel_radius_m: 0.0825
+    track_width_m: 0.40
+    wheelbase_m: 0.50                # в смешивании не используется, справочно
+    gear_ratio: 3.0                  # обороты мотора на оборот колеса (ремень HTD-5M)
+    motor_pole_pairs: 7
+    max_erpm: 4000                   # жёсткий предел eRPM
+    min_erpm: 900                    # подпор: ниже этого sensorless срывается; 0=выкл
+    max_wheel_speed_mps: 1.6
+    max_wheel_accel_mps2: 1.5        # ограничение разгона на колесо; торможение 2x
+    idle_mode: coast                 # coast=свободный выбег | hold=удержание RPM 0
+    battery_cells: 6                 # 6S li-ion

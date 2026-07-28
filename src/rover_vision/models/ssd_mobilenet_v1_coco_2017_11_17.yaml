@@ -1,0 +1,12 @@
+id: ssd_mobilenet_v1_coco_2017_11_17
+name: SSD MobileNet v1 COCO
+description: Fixed TensorFlow SSD MobileNet v1 model for OpenCV DNN object detection.
+task: detection
+format: opencv_ssd_tf
+model: ssd_mobilenet_v1_coco_2017_11_17/frozen_inference_graph.pb
+config: ssd_mobilenet_v1_coco_2017_11_17.pbtxt
+input_size: [300, 300]
+swap_rb: true
+confidence_threshold: 0.30
+nms_threshold: 0.45
+labels_file: object_detection_classes_coco.txt

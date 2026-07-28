@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Rover Setup — VESC/CAN</title>
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--line:#2a333f;--txt:#e6edf3;
+    --dim:#9aa7b4;--accent:#3b82f6;--accent2:#22c55e;--warn:#f59e0b;--danger:#ef4444;--radius:14px}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);-webkit-user-select:none;user-select:none}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:650}
+  .pill{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+  .pill.ok{color:var(--accent2);border-color:#1e4d33}
+  .pill.err{color:var(--danger);border-color:#5b2626}
+  .spacer{flex:1}
+  main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;max-width:1120px;margin:0 auto}
+  @media(max-width:880px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .card h2{font-size:14px;margin:0 0 12px;font-weight:650;letter-spacing:.02em;text-transform:uppercase;color:var(--dim)}
+  button{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);padding:9px 14px;border-radius:10px;cursor:pointer;transition:.12s}
+  button:hover{border-color:#3d4a59;background:#232c37}
+  button:active{transform:translateY(1px)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.good{background:var(--accent2);border-color:var(--accent2);color:#04210f}
+  button.stop{background:var(--danger);border-color:var(--danger);color:#fff;font-weight:700}
+  button.ghost{background:transparent}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .muted{color:var(--dim);font-size:13px}
+  .motorlist{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .motor{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .motor .id{font-weight:700;font-variant-numeric:tabular-nums;font-size:15px;min-width:54px}
+  .motor .pos{font-size:12px;color:var(--dim)}
+  .badge{font-size:11px;padding:2px 7px;border-radius:6px;background:#20303f;color:#8ec5ff}
+  .badge.fwd{background:#123020;color:#7ee2a8}
+  .badge.rev{background:#3a2416;color:#f0b483}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+  .cell{padding:18px 10px;border:1.5px solid var(--line);border-radius:12px;text-align:center;cursor:pointer;background:var(--panel2);transition:.12s}
+  .cell:hover{border-color:var(--accent)}
+  .cell.sel{border-color:var(--accent2);background:#12251a}
+  .cell.taken{opacity:.55}
+  .cell b{display:block;font-size:15px}
+  .cell small{color:var(--dim)}
+  .frontlabel{grid-column:1/3;text-align:center;color:var(--dim);font-size:11px;letter-spacing:.15em;text-transform:uppercase}
+  .padwrap{display:flex;flex-direction:column;align-items:center;gap:14px}
+  #pad{touch-action:none;background:radial-gradient(circle at center,#1b2530,#12181f);border:1px solid var(--line);border-radius:50%}
+  input[type=range]{width:100%}
+  input[type=number]{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%}
+  .hint{background:#111a24;border:1px dashed #2c3d4e;border-radius:10px;padding:10px 12px;font-size:13px;color:#9fd0ff;margin:10px 0}
+  .dirbtns{display:flex;gap:10px;margin-top:8px}
+  .dirbtns button{flex:1}
+  .kin{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .kin label{font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:4px}
+  .charts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+  @media(max-width:880px){.charts{grid-template-columns:1fr}}
+  .chart{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .ctitle{font-size:12px;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between}
+  .ctitle b{color:var(--txt);font-variant-numeric:tabular-nums}
+  .chart canvas{width:100%;height:150px;display:block}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+  pre.out{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;overflow:auto;color:#9fd0ff}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛠️ Rover Setup</h1>
+  <span class="pill" id="chanPill">порт …</span>
+  <span class="pill" id="busPill">шина …</span>
+  <div class="spacer"></div>
+  <button class="stop" id="estop">⛔ СТОП</button>
+</header>
+
+<main>
+  <!-- SETUP -->
+  <section class="card">
+    <h2>1 · Идентификация моторов</h2>
+    <div class="row">
+      <button class="primary" id="scanBtn">🔍 Сканировать шину</button>
+      <span class="muted" id="scanInfo">не сканировалось</span>
+    </div>
+    <div class="motorlist" id="motorList"></div>
+    <div id="wizard" style="display:none">
+      <div class="hint" id="wizHint">Мотор крутится на 5%. Нажми позицию крутящегося колеса.</div>
+      <div class="grid2">
+        <div class="frontlabel">↑ Перёд ↑</div>
+        <div class="cell" data-pos="FL"><b>◱</b><small>перёд-лево</small></div>
+        <div class="cell" data-pos="FR"><b>◲</b><small>перёд-право</small></div>
+        <div class="cell" data-pos="RL"><b>◳</b><small>зад-лево</small></div>
+        <div class="cell" data-pos="RR"><b>◰</b><small>зад-право</small></div>
+        <div class="frontlabel">↓ Зад ↓</div>
+      </div>
+      <div id="dirStep" style="display:none">
+        <div class="muted">В какую сторону крутится это колесо?</div>
+        <div class="dirbtns">
+          <button class="good" data-dir="1">➡️ Вперёд</button>
+          <button data-dir="-1">⬅️ Назад</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px"><button class="ghost" id="wizStop">Остановить</button></div>
+    </div>
+  </section>
+
+  <!-- KINEMATICS + EXPORT -->
+  <section class="card">
+    <h2>2 · Кинематика и экспорт</h2>
+    <div class="kin">
+      <label>Радиус колеса R, м<input type="number" step="0.001" id="k_wheel_radius"></label>
+      <label>Колея (track), м<input type="number" step="0.001" id="k_wheel_separation"></label>
+      <label>База (wheelbase), м<input type="number" step="0.001" id="k_wheelbase"></label>
+      <label>Редукция мотор→колесо<input type="number" step="0.01" id="k_gear_ratio"></label>
+      <label>Pole pairs<input type="number" step="1" id="k_motor_pole_pairs"></label>
+      <label>Макс. скорость, м/с<input type="number" step="0.1" id="k_max_wheel_speed"></label>
+      <label>Батарея, банок (S)<input type="number" step="1" id="k_battery_cells"></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="saveKin">💾 Сохранить кинематику</button>
+      <button class="primary" id="exportBtn">📦 Экспорт motors.yaml + kinematics.yaml</button>
+    </div>
+    <div id="exportOut" style="margin-top:10px"></div>
+  </section>
+
+  <!-- TEST DRIVE -->
+  <section class="card">
+    <h2>3 · Тест направлений (raw differential)</h2>
+    <div class="padwrap">
+      <canvas id="pad" width="240" height="240"></canvas>
+      <div class="row" style="width:100%;justify-content:center">
+        <span class="muted">Макс ERPM</span><b id="speedVal" style="min-width:48px;text-align:right">1000</b>
+      </div>
+      <input type="range" id="speed" min="100" max="6000" step="100" value="1000">
+      <div class="muted">Джойстик / WASD. Проверь: вперёд едет прямо, вправо — поворот вправо.</div>
+    </div>
+  </section>
+
+  <!-- CHARTS -->
+  <section class="card">
+    <h2>Телеметрия</h2>
+    <div class="charts">
+      <div class="chart"><div class="ctitle"><span>Ток по моторам</span><b id="curRead">— A</b></div>
+        <canvas id="chCur"></canvas><div class="legend" id="legMotors"></div></div>
+      <div class="chart"><div class="ctitle"><span id="battTitle">Батарея</span><b id="voltRead">—</b></div>
+        <canvas id="chVolt"></canvas><div class="legend"><span id="ahRead">— Ah</span><span id="iinRead">— A</span></div></div>
+      <div class="chart"><div class="ctitle"><span>Скорость (ERPM)</span><b id="rpmRead">—</b></div>
+        <canvas id="chRpm"></canvas><div class="legend" id="legMotors2"></div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const api=(p,b)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json());
+let ST={config:{},known_ids:[],positions:['FL','FR','RL','RR'],max_erpm:1000,kinematics:{}};
+let identifying=null, hbTimer=null, kinLoaded=false;
+
+async function refresh(){
+  const s=await fetch('/api/state').then(r=>r.json()); ST=s;
+  document.getElementById('chanPill').textContent='порт '+(s.channel||'?');
+  const bp=document.getElementById('busPill');
+  if(s.bus_error){bp.textContent='шина: ошибка';bp.className='pill err';bp.title=s.bus_error;}
+  else{bp.textContent='шина OK';bp.className='pill ok';bp.title='';}
+  if(!kinLoaded && s.kinematics){ for(const k in s.kinematics){
+    const el=document.getElementById('k_'+k); if(el) el.value=s.kinematics[k]; } kinLoaded=true; }
+  renderMotors();
+}
+setInterval(refresh,800);
+
+document.getElementById('scanBtn').onclick=async e=>{
+  e.target.disabled=true;e.target.textContent='Сканирую…';
+  const r=await api('/api/scan'); e.target.disabled=false;e.target.textContent='🔍 Сканировать шину';
+  document.getElementById('scanInfo').textContent=r.ids&&r.ids.length?('найдено: '+r.ids.join(', ')):'ничего не найдено';
+  refresh();
+};
+function posOf(id){return ST.config[String(id)]||null;}
+function renderMotors(){
+  const ids=ST.known_ids||[], list=document.getElementById('motorList'); list.innerHTML='';
+  if(!ids.length){list.innerHTML='<div class="muted">Нажми «Сканировать шину».</div>';return;}
+  ids.forEach(id=>{
+    const c=posOf(id), el=document.createElement('div'); el.className='motor';
+    let ph='<span class="pos">не назначен</span>';
+    if(c){const dir=c.forward_sign>=0?'<span class="badge fwd">вперёд=+</span>':'<span class="badge rev">вперёд=−</span>';
+      ph=`<span class="badge">${c.position}</span> ${dir}`;}
+    el.innerHTML=`<span class="id">${id}</span> ${ph}<div class="spacer"></div>`;
+    const b=document.createElement('button');
+    b.textContent=identifying&&identifying.id===id?'● крутится':'▶ Крутить';
+    b.className=identifying&&identifying.id===id?'good':''; b.onclick=()=>startIdentify(id); el.appendChild(b);
+    if(c){const u=document.createElement('button');u.className='ghost';u.textContent='✕';u.title='убрать';
+      u.onclick=async()=>{await api('/api/unassign',{id});refresh();};el.appendChild(u);}
+    list.appendChild(el);
+  });
+}
+function startIdentify(id){
+  identifying={id,position:null}; api('/api/identify',{id}); startHb();
+  document.getElementById('wizard').style.display='block';
+  document.getElementById('dirStep').style.display='none';
+  document.getElementById('wizHint').textContent=`Мотор ID ${id} крутится на 5%. Нажми позицию колеса.`;
+  updateCells(); renderMotors();
+}
+function updateCells(){document.querySelectorAll('.cell').forEach(c=>{
+  const pos=c.dataset.pos; c.classList.toggle('sel',identifying&&identifying.position===pos);
+  const taken=Object.entries(ST.config).some(([k,v])=>v.position===pos&&(!identifying||String(identifying.id)!==k));
+  c.classList.toggle('taken',taken);});}
+document.querySelectorAll('.cell').forEach(cell=>cell.onclick=()=>{
+  if(!identifying)return; identifying.position=cell.dataset.pos; updateCells();
+  document.getElementById('dirStep').style.display='block';
+  document.getElementById('wizHint').textContent=`Позиция ${cell.dataset.pos}. Укажи направление.`;});
+document.querySelectorAll('#dirStep [data-dir]').forEach(b=>b.onclick=async()=>{
+  if(!identifying||!identifying.position)return;
+  await api('/api/assign',{id:identifying.id,position:identifying.position,forward_sign:parseInt(b.dataset.dir)});
+  await stopIdentify();});
+document.getElementById('wizStop').onclick=stopIdentify;
+async function stopIdentify(){await api('/api/stop');identifying=null;stopHb();
+  document.getElementById('wizard').style.display='none';refresh();}
+function startHb(){stopHb();hbTimer=setInterval(()=>api('/api/heartbeat'),200);}
+function stopHb(){if(hbTimer){clearInterval(hbTimer);hbTimer=null;}}
+
+document.getElementById('estop').onclick=async()=>{await api('/api/stop');identifying=null;stopHb();
+  document.getElementById('wizard').style.display='none';resetPad();refresh();};
+
+// kinematics save + export
+document.getElementById('saveKin').onclick=async()=>{
+  const body={}; ['wheel_radius','wheel_separation','wheelbase','gear_ratio','motor_pole_pairs','max_wheel_speed','battery_cells']
+    .forEach(k=>body[k]=parseFloat(document.getElementById('k_'+k).value));
+  await api('/api/kinematics',body);
+  document.getElementById('exportOut').innerHTML='<span class="muted">кинематика сохранена</span>';
+};
+document.getElementById('exportBtn').onclick=async()=>{
+  await document.getElementById('saveKin').onclick();
+  const r=await api('/api/export'); const out=document.getElementById('exportOut');
+  if(!r.ok){out.innerHTML=`<span style="color:var(--danger)">ошибка: ${r.error}</span>`;return;}
+  let warn=r.missing_positions&&r.missing_positions.length?
+    `<div style="color:var(--warn)">⚠ не назначены: ${r.missing_positions.join(', ')}</div>`:
+    '<div style="color:var(--accent2)">✓ все 4 колеса назначены</div>';
+  out.innerHTML=warn+`<pre class="out">motors.yaml → ${r.motors_yaml}\nkinematics.yaml → ${r.kinematics_yaml}\n`+
+    JSON.stringify(r.wheels,null,2)+'</pre>';
+};
+
+// speed
+const speed=document.getElementById('speed'),speedVal=document.getElementById('speedVal');
+speed.addEventListener('input',()=>speedVal.textContent=speed.value);
+speed.addEventListener('change',()=>api('/api/set_speed',{max_erpm:parseInt(speed.value)}));
+
+// joystick
+const pad=document.getElementById('pad'),ctx=pad.getContext('2d');
+const R=pad.width/2,KN=32;let kx=0,ky=0,active=false,driveTimer=null;
+function drawPad(){ctx.clearRect(0,0,pad.width,pad.height);ctx.strokeStyle='#2a333f';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(R,12);ctx.lineTo(R,pad.height-12);ctx.moveTo(12,R);ctx.lineTo(pad.width-12,R);ctx.stroke();
+  ctx.beginPath();ctx.arc(R,R,R-12,0,7);ctx.stroke();
+  const x=R+kx*(R-KN),y=R+ky*(R-KN);const g=ctx.createRadialGradient(x-8,y-8,4,x,y,KN);
+  g.addColorStop(0,active?'#5b9bff':'#4a5766');g.addColorStop(1,active?'#2f6fd6':'#2b3542');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,KN,0,7);ctx.fill();ctx.strokeStyle='#0b0e12';ctx.stroke();}
+drawPad();
+function setKnob(px,py){const r=pad.getBoundingClientRect();let dx=(px-r.left-R)/(R-KN),dy=(py-r.top-R)/(R-KN);
+  const m=Math.hypot(dx,dy);if(m>1){dx/=m;dy/=m;}kx=dx;ky=dy;drawPad();}
+function resetPad(){kx=0;ky=0;active=false;drawPad();if(driveTimer){clearInterval(driveTimer);driveTimer=null;}}
+function sendDrive(){api('/api/drive',{throttle:-ky,steer:kx});}
+function beginDrive(){active=true;if(!driveTimer)driveTimer=setInterval(sendDrive,60);sendDrive();}
+async function endDrive(){active=false;kx=0;ky=0;drawPad();if(driveTimer){clearInterval(driveTimer);driveTimer=null;}
+  await api('/api/drive',{throttle:0,steer:0});await api('/api/stop');}
+pad.addEventListener('pointerdown',e=>{pad.setPointerCapture(e.pointerId);setKnob(e.clientX,e.clientY);beginDrive();});
+pad.addEventListener('pointermove',e=>{if(active)setKnob(e.clientX,e.clientY);});
+pad.addEventListener('pointerup',endDrive);pad.addEventListener('pointercancel',endDrive);
+const keys={};
+window.addEventListener('keydown',e=>{const k=e.key.toLowerCase();
+  if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){keys[k]=true;e.preventDefault();applyKeys();}});
+window.addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in keys){delete keys[k];e.preventDefault();applyKeys();}});
+function applyKeys(){let y=0,x=0;
+  if(keys['w']||keys['arrowup'])y-=1;if(keys['s']||keys['arrowdown'])y+=1;
+  if(keys['a']||keys['arrowleft'])x-=1;if(keys['d']||keys['arrowright'])x+=1;
+  if(!x&&!y){endDrive();return;}kx=Math.max(-1,Math.min(1,x));ky=Math.max(-1,Math.min(1,y));drawPad();beginDrive();}
+
+// charts
+const COLORS=['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7','#14b8a6'];const WINDOW_S=30;let SAMPLES=[];
+function labelFor(id){const c=(ST.config||{})[String(id)];return c?c.position:('ID '+id);}
+function colorFor(id){const ids=(ST.known_ids||[]).map(String);let i=ids.indexOf(String(id));if(i<0)i=0;return COLORS[i%COLORS.length];}
+function fitCanvas(cv){const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return{c,w,h};}
+function drawChart(cv,series,now,opts){opts=opts||{};const{c,w,h}=fitCanvas(cv);c.clearRect(0,0,w,h);
+  const padL=34,padR=8,padT=8,padB=16,x0=padL,x1=w-padR,y0=padT,y1=h-padB;
+  let lo=Infinity,hi=-Infinity;series.forEach(s=>s.points.forEach(p=>{if(p.y==null)return;if(p.y<lo)lo=p.y;if(p.y>hi)hi=p.y;}));
+  if(!isFinite(lo)||!isFinite(hi)){lo=0;hi=1;}if(opts.symmetric){const m=Math.max(Math.abs(lo),Math.abs(hi),1);lo=-m;hi=m;}
+  if(hi-lo<1e-6)hi=lo+1;const pd=(hi-lo)*0.12;lo-=pd;hi+=pd;
+  const X=t=>x0+(x1-x0)*(1-(now-t)/WINDOW_S),Y=v=>y1-(y1-y0)*(v-lo)/(hi-lo);
+  c.strokeStyle='#242d38';c.fillStyle='#6b7885';c.lineWidth=1;c.font='10px system-ui';c.textAlign='right';c.textBaseline='middle';
+  for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,y=Y(v);c.beginPath();c.moveTo(x0,y);c.lineTo(x1,y);c.stroke();
+    c.fillText(v.toFixed(opts.dec!=null?opts.dec:0),x0-4,y);}
+  if(lo<0&&hi>0){c.strokeStyle='#3a4a5a';const yz=Y(0);c.beginPath();c.moveTo(x0,yz);c.lineTo(x1,yz);c.stroke();}
+  series.forEach(s=>{c.strokeStyle=s.color;c.lineWidth=1.8;c.beginPath();let st=false;
+    s.points.forEach(p=>{if(p.y==null||p.t<now-WINDOW_S){st=false;return;}const x=X(p.t),y=Y(p.y);
+      if(!st){c.moveTo(x,y);st=true;}else c.lineTo(x,y);});c.stroke();});}
+function buildSeries(acc){return(ST.known_ids||[]).map(String).map(id=>({id,color:colorFor(id),
+  points:SAMPLES.map(s=>({t:s.t,y:s.m[id]?acc(s.m[id]):null}))}));}
+function renderLegends(){const html=(ST.known_ids||[]).map(id=>`<span><i style="background:${colorFor(id)}"></i>${labelFor(id)}</span>`).join('');
+  document.getElementById('legMotors').innerHTML=html;document.getElementById('legMotors2').innerHTML=html;}
+async function pollHistory(){try{
+  const r=await fetch('/api/history').then(r=>r.json());SAMPLES=r.samples||[];const now=r.now;renderLegends();
+  drawChart(document.getElementById('chCur'),buildSeries(m=>m.i),now,{symmetric:true,dec:1});
+  const haveV=SAMPLES.some(s=>s.v!=null);
+  if(haveV){document.getElementById('battTitle').textContent='Напряжение (V)';
+    drawChart(document.getElementById('chVolt'),[{id:'v',color:'#22c55e',points:SAMPLES.map(s=>({t:s.t,y:s.v}))}],now,{dec:1});}
+  else{document.getElementById('battTitle').textContent='Заряд (Ah)';
+    drawChart(document.getElementById('chVolt'),[{id:'ah',color:'#22c55e',points:SAMPLES.map(s=>({t:s.t,y:s.ah}))}],now,{dec:3});}
+  drawChart(document.getElementById('chRpm'),buildSeries(m=>m.rpm),now,{symmetric:true,dec:0});
+  const last=SAMPLES[SAMPLES.length-1]||{};
+  let cm='—';if(last.m){const cv=Object.values(last.m).map(x=>x.i).filter(v=>v!=null);if(cv.length)cm=cv.reduce((a,b)=>Math.abs(b)>Math.abs(a)?b:a,0).toFixed(1);}
+  document.getElementById('curRead').textContent=cm+' A';
+  document.getElementById('voltRead').textContent=last.v!=null?last.v.toFixed(1)+' V':(last.ah!=null?last.ah.toFixed(3)+' Ah':'—');
+  document.getElementById('ahRead').textContent=(last.ah!=null?last.ah.toFixed(3):'—')+' Ah';
+  document.getElementById('iinRead').textContent='бат '+(last.i!=null?last.i.toFixed(1):'—')+' A';
+  let rm='—';if(last.m){const vv=Object.values(last.m).map(x=>x.rpm).filter(v=>v!=null);if(vv.length)rm=Math.round(vv.reduce((a,b)=>Math.abs(b)>Math.abs(a)?b:a,0));}
+  document.getElementById('rpmRead').textContent=rm;
+}catch(e){}}
+setInterval(pollHistory,400);
+refresh();
+</script>
+</body>
+</html>

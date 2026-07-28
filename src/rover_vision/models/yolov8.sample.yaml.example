@@ -1,0 +1,11 @@
+id: yolov8n
+name: YOLOv8 Nano
+description: Пример manifest для ONNX-модели
+task: detection
+format: yolov8
+model: yolov8n.onnx
+input_size: [640, 640]
+swap_rb: true
+confidence_threshold: 0.25
+nms_threshold: 0.45
+labels_file: coco.names

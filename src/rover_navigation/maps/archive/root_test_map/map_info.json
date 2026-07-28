@@ -1,0 +1,5 @@
+{
+  "label": "root_test_map",
+  "source": "legacy repository root maps/test_map.yaml",
+  "description": "Legacy 1x1 meter test map moved from the removed repository root maps directory."
+}
