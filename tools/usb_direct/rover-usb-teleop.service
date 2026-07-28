@@ -1,0 +1,17 @@
+[Unit]
+Description=GIGAROVER USB-VESC web teleop (порт 8770)
+# не деремся за моторы: motord/can-teleop гасятся, а rover-bringup может жить —
+# его vesc_bridge_node ходит на UDP 8460, который теперь обслуживаем мы
+Conflicts=rover-motord.service rover-can-teleop.service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/ubuntu/rover_ws/tools/usb_direct/usb_teleop.py --port auto --bind 0.0.0.0
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
