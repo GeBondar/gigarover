@@ -238,8 +238,10 @@ ROS State — ноды, топики и сервисы
               <button data-key="KeyQ">Q ↺</button><button data-key="KeyW">W ↑</button><button data-key="KeyE">E ↻</button>
               <button data-key="KeyA">A ←</button><button data-key="KeyS">S ↓</button><button data-key="KeyD">D →</button>
             </div>
+            <h2 class="joypad-title">Джойстик</h2>
+            <div class="joypad" id="joypad"><div class="joypad-knob" id="joypad-knob"></div></div>
             <button class="stop-button wide" id="drive-stop">SPACE / STOP</button>
-            <p class="help-text">Команда существует только пока удерживается клавиша или кнопка. Потеря фокуса и скрытие вкладки вызывают нулевой Twist.</p>
+            <p class="help-text">Команда существует только пока удерживается клавиша, кнопка или джойстик. Потеря фокуса и скрытие вкладки вызывают нулевой Twist.</p>
           </article>
 
           <article class="panel">
@@ -261,6 +263,36 @@ linear.y: 0.00
 angular.z: 0.00</pre>
             </div>
             <div id="drive-warning" class="notice hidden"></div>
+          </article>
+
+          <article class="panel" id="motor-setup-panel">
+            <h2>Настройка моторов (USB-режим)</h2>
+            <p class="help-text">Назначение позиций колёс и направлений вращения. Работает, когда активна служба rover-usb-teleop; сохраняется в usb_motors.json на роботе.</p>
+            <div class="button-row">
+              <button id="motor-scan">🔍 Сканировать шину</button>
+              <span class="help-text" id="motor-scan-info"></span>
+            </div>
+            <div class="motor-setup-list" id="motor-setup-list"></div>
+            <div id="motor-wizard" class="hidden">
+              <div class="notice" id="motor-wizard-hint"></div>
+              <div class="motor-pos-grid">
+                <div class="front-label">↑ Перёд робота ↑</div>
+                <div class="motor-pos-cell" data-pos="FL">◱ перёд-лево</div>
+                <div class="motor-pos-cell" data-pos="FR">◲ перёд-право</div>
+                <div class="motor-pos-cell" data-pos="RL">◳ зад-лево</div>
+                <div class="motor-pos-cell" data-pos="RR">◰ зад-право</div>
+                <div class="front-label">↓ Зад робота ↓</div>
+              </div>
+              <div id="motor-dir-step" class="hidden">
+                <p class="help-text">В какую сторону сейчас едет это колесо?</p>
+                <div class="button-row">
+                  <button data-motor-dir="1">➡️ Вперёд</button>
+                  <button data-motor-dir="-1">⬅️ Назад</button>
+                </div>
+              </div>
+              <div class="button-row"><button id="motor-wizard-stop">Остановить</button></div>
+            </div>
+            <div id="motor-setup-offline" class="notice hidden">Служба rover-usb-teleop недоступна — настройка моторов возможна только в USB-режиме.</div>
           </article>
         </div>
       </section>

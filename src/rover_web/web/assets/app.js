@@ -151,6 +151,7 @@ const state = {
   octolinerSettings: null,
   driveKeys: new Set(),
   driveTimer: null,
+  driveJoy: { x: 0, y: 0, active: false },
   route: {
     plans: [],
     selectedName: '',
@@ -2984,10 +2985,15 @@ function computeDriveCommand() {
   const rotateLeft = state.driveKeys.has('KeyQ') ? 1 : 0;
   const rotateRight = state.driveKeys.has('KeyE') ? 1 : 0;
 
+  // джойстик суммируется с клавишами: вперёд/назад + поворот, в пределах слайдеров
+  const joyX = state.driveJoy.active ? state.driveJoy.x : 0;
+  const joyY = state.driveJoy.active ? state.driveJoy.y : 0;
+  const clamp1 = (v) => Math.max(-1, Math.min(1, v));
+
   return {
-    linearX: (forward - backward) * linear,
+    linearX: clamp1((forward - backward) + joyY) * linear,
     linearY: (left - right) * lateral,
-    angularZ: (rotateLeft - rotateRight) * angular,
+    angularZ: clamp1((rotateLeft - rotateRight) - joyX) * angular,
   };
 }
 
@@ -3012,6 +3018,201 @@ async function sendDriveCommand() {
   }
 }
 
+function setDriveJoyKnob(x, y) {
+  const pad = $('#joypad');
+  const knob = $('#joypad-knob');
+  if (!pad || !knob) return;
+  const r = pad.clientWidth / 2;
+  const k = knob.clientWidth / 2;
+  knob.style.left = `${r + x * r * 0.7 - k}px`;
+  knob.style.top = `${r - y * r * 0.7 - k}px`;
+}
+
+function resetDriveJoy() {
+  state.driveJoy.x = 0;
+  state.driveJoy.y = 0;
+  state.driveJoy.active = false;
+  setDriveJoyKnob(0, 0);
+}
+
+function bindDriveJoypad() {
+  const pad = $('#joypad');
+  if (!pad) return;
+  const readPointer = (event) => {
+    const rect = pad.getBoundingClientRect();
+    let x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    let y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    const m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; }
+    state.driveJoy.x = x;
+    state.driveJoy.y = y;
+    setDriveJoyKnob(x, y);
+  };
+  const release = async () => {
+    if (!state.driveJoy.active) return;
+    resetDriveJoy();
+    if (state.driveKeys.size === 0) {
+      stopDriveLoop();
+    }
+    await sendDriveCommand();
+  };
+  pad.addEventListener('pointerdown', async (event) => {
+    pad.setPointerCapture(event.pointerId);
+    state.driveJoy.active = true;
+    readPointer(event);
+    startDriveLoop();
+    await sendDriveCommand();
+  });
+  pad.addEventListener('pointermove', (event) => {
+    if (state.driveJoy.active) readPointer(event);
+  });
+  pad.addEventListener('pointerup', release);
+  pad.addEventListener('pointercancel', release);
+  setDriveJoyKnob(0, 0);
+}
+
+// ---- настройка моторов: мастер из usb_teleop (:8770), USB-режим ----
+const motorSetup = {
+  base: `${window.location.protocol}//${window.location.hostname}:8770`,
+  state: { config: {}, known: [] },
+  identifying: null,
+  hbTimer: null,
+};
+
+async function motorApi(path, body) {
+  const response = await fetch(`${motorSetup.base}${path}`, body === undefined
+    ? undefined
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+async function refreshMotorSetup() {
+  try {
+    motorSetup.state = await motorApi('/api/state');
+    $('#motor-setup-offline').classList.add('hidden');
+    $('#motor-setup-list').classList.remove('hidden');
+  } catch (error) {
+    $('#motor-setup-offline').classList.remove('hidden');
+    $('#motor-setup-list').classList.add('hidden');
+    return;
+  }
+  renderMotorSetupList();
+  syncMotorPosCells();
+}
+
+function renderMotorSetupList() {
+  const list = $('#motor-setup-list');
+  list.innerHTML = '';
+  (motorSetup.state.known || []).forEach((key) => {
+    const config = motorSetup.state.config[key];
+    const row = document.createElement('div');
+    row.className = 'motor-setup-row';
+    const name = document.createElement('span');
+    name.className = 'motor-name';
+    name.textContent = key === 'local' ? 'USB' : `CAN ${key}`;
+    row.append(name);
+    const info = document.createElement('span');
+    info.className = 'help-text';
+    info.textContent = config
+      ? `${config.position} · вперёд ${config.forward_sign >= 0 ? '=+' : '=−'}`
+      : 'не назначен';
+    row.append(info);
+    const spin = document.createElement('button');
+    const busy = motorSetup.identifying && motorSetup.identifying.key === key;
+    spin.textContent = busy ? '● крутится' : '▶ Крутить';
+    spin.addEventListener('click', () => startMotorIdentify(key));
+    row.append(spin);
+    if (config) {
+      const unassign = document.createElement('button');
+      unassign.textContent = '✕';
+      unassign.title = 'убрать назначение';
+      unassign.addEventListener('click', async () => {
+        await motorApi('/api/unassign', { key });
+        refreshMotorSetup();
+      });
+      row.append(unassign);
+    }
+    list.append(row);
+  });
+}
+
+function syncMotorPosCells() {
+  $$('.motor-pos-cell').forEach((cell) => {
+    const pos = cell.dataset.pos;
+    cell.classList.toggle('sel', Boolean(motorSetup.identifying && motorSetup.identifying.position === pos));
+    const taken = Object.entries(motorSetup.state.config || {}).some(([key, value]) =>
+      value.position === pos && (!motorSetup.identifying || motorSetup.identifying.key !== key));
+    cell.classList.toggle('taken', taken);
+  });
+}
+
+function startMotorIdentify(key) {
+  motorSetup.identifying = { key, position: null };
+  motorApi('/api/identify', { key }).catch(() => {});
+  if (motorSetup.hbTimer) window.clearInterval(motorSetup.hbTimer);
+  motorSetup.hbTimer = window.setInterval(() => motorApi('/api/heartbeat', {}).catch(() => {}), 200);
+  $('#motor-wizard').classList.remove('hidden');
+  $('#motor-dir-step').classList.add('hidden');
+  $('#motor-wizard-hint').textContent =
+    `Мотор ${key === 'local' ? 'USB' : `CAN ${key}`} медленно крутится. Нажми позицию крутящегося колеса.`;
+  renderMotorSetupList();
+  syncMotorPosCells();
+}
+
+async function stopMotorIdentify() {
+  motorSetup.identifying = null;
+  if (motorSetup.hbTimer) {
+    window.clearInterval(motorSetup.hbTimer);
+    motorSetup.hbTimer = null;
+  }
+  await motorApi('/api/stop', {}).catch(() => {});
+  $('#motor-wizard').classList.add('hidden');
+  refreshMotorSetup();
+}
+
+function bindMotorSetupPanel() {
+  if (!$('#motor-setup-panel')) return;
+  $('#motor-scan').addEventListener('click', async (event) => {
+    const button = event.target;
+    button.disabled = true;
+    button.textContent = 'Сканирую… (~10 c)';
+    try {
+      const result = await motorApi('/api/scan', {});
+      $('#motor-scan-info').textContent = result.ids ? `на CAN найдено: ${result.ids.join(', ')}` : 'скан не удался';
+    } catch (error) {
+      $('#motor-scan-info').textContent = 'служба недоступна';
+    }
+    button.disabled = false;
+    button.textContent = '🔍 Сканировать шину';
+    refreshMotorSetup();
+  });
+  $$('.motor-pos-cell').forEach((cell) => {
+    cell.addEventListener('click', () => {
+      if (!motorSetup.identifying) return;
+      motorSetup.identifying.position = cell.dataset.pos;
+      syncMotorPosCells();
+      $('#motor-dir-step').classList.remove('hidden');
+      $('#motor-wizard-hint').textContent =
+        `Позиция ${cell.dataset.pos} выбрана. Куда едет колесо при этом вращении?`;
+    });
+  });
+  $$('#motor-dir-step [data-motor-dir]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!motorSetup.identifying || !motorSetup.identifying.position) return;
+      await motorApi('/api/assign', {
+        key: motorSetup.identifying.key,
+        position: motorSetup.identifying.position,
+        forward_sign: Number(button.dataset.motorDir),
+      }).catch(() => {});
+      await stopMotorIdentify();
+    });
+  });
+  $('#motor-wizard-stop').addEventListener('click', stopMotorIdentify);
+  refreshMotorSetup();
+  window.setInterval(refreshMotorSetup, 5000);
+}
+
 function syncDriveKeyHighlights() {
   $$('#keypad button[data-key]').forEach((button) => {
     button.classList.toggle('active', state.driveKeys.has(button.dataset.key));
@@ -3021,7 +3222,7 @@ function syncDriveKeyHighlights() {
 function startDriveLoop() {
   if (state.driveTimer) return;
   state.driveTimer = window.setInterval(() => {
-    if (state.driveKeys.size > 0) {
+    if (state.driveKeys.size > 0 || state.driveJoy.active) {
       sendDriveCommand();
     }
   }, 120);
@@ -3037,6 +3238,7 @@ function stopDriveLoop() {
 async function stopDrive() {
   stopDriveLoop();
   state.driveKeys.clear();
+  resetDriveJoy();
   syncDriveKeyHighlights();
   updateDrivePreview({ linearX: 0, linearY: 0, angularZ: 0 });
   try {
@@ -3823,6 +4025,8 @@ function bindDrivePage() {
   });
 
   $('#drive-stop').addEventListener('click', stopDrive);
+  bindDriveJoypad();
+  bindMotorSetupPanel();
 
   $$('#keypad button[data-key]').forEach((button) => {
     const activate = async () => {
