@@ -1,6 +1,6 @@
 profile:
   name: gigarover
-  description: GIGAROVER VESC drivetrain, teleop and web UI without extra sensors.
+  description: GIGAROVER VESC drivetrain, teleop, web UI and USB camera.
 
 components:
   base: true
@@ -13,7 +13,7 @@ components:
 
   imu: false
   lidar: false
-  camera: false
+  camera: true
   vision: false
   nav2: false
   slam: false
