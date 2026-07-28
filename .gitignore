@@ -17,6 +17,8 @@ can_telemetry*.csv
 # — истина живёт в ~/rover_config на самом ровере
 /rover_config/
 src/rover_setup_web/rover_setup_web/setup_state.json
+# раскладка моторов USB-телеопа — своя на каждом железе
+tools/usb_direct/usb_motors.json
 
 # Редакторы
 .vscode/
