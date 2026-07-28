@@ -102,17 +102,21 @@ def default_maps_root(workspace_root: Path) -> str:
 
 CAMERA_PARAMETER_NAMES = [
     'device',
-    'image_topic',
-    'compressed_image_topic',
     'frame_id',
     'width',
     'height',
     'fps',
     'use_mjpeg',
-    'publish_raw',
-    'publish_compressed',
     'jpeg_quality',
     'reconnect_interval_sec',
+    'ws_port',
+]
+# Owned by ws_image_publisher_node (WebSocket -> ROS topics republisher).
+CAMERA_PUBLISHER_PARAMETER_NAMES = [
+    'image_topic',
+    'compressed_image_topic',
+    'publish_raw',
+    'publish_compressed',
 ]
 VISION_PARAMETER_NAMES = [
     'enabled',
@@ -504,6 +508,10 @@ class RoverWebGateway(Node):
         )
         self.declare_parameter('command_topic', '/cmd_vel')
         self.declare_parameter('camera_node_name', '/usb_camera_node')
+        self.declare_parameter(
+            'camera_publisher_node_name', '/ws_image_publisher_node'
+        )
+        self.declare_parameter('camera_ws_port', 8766)
         self.declare_parameter('vision_node_name', '/camera_detector_node')
         self.declare_parameter('lidar_node_name', '/sllidar_node')
         self.declare_parameter('led_strip_node_name', '/led_strip_node')
@@ -567,6 +575,10 @@ class RoverWebGateway(Node):
         self.camera_node_name = str(
             self.get_parameter('camera_node_name').value
         ).strip() or '/usb_camera_node'
+        self.camera_publisher_node_name = str(
+            self.get_parameter('camera_publisher_node_name').value
+        ).strip() or '/ws_image_publisher_node'
+        self.camera_ws_port = int(self.get_parameter('camera_ws_port').value)
         self.vision_node_name = str(
             self.get_parameter('vision_node_name').value
         ).strip() or '/camera_detector_node'
@@ -1265,6 +1277,8 @@ class RoverWebGateway(Node):
             'imu_topic': self.imu_topic,
             'diagnostics_topic': self.diagnostics_topic,
             'camera_node_name': self.camera_node_name,
+            'camera_publisher_node_name': self.camera_publisher_node_name,
+            'camera_ws_port': self.camera_ws_port,
             'vision_node_name': self.vision_node_name,
             'lidar_node_name': self.lidar_node_name,
             'led_strip_node_name': self.led_strip_node_name,
@@ -2125,6 +2139,28 @@ class RoverWebGateway(Node):
         values = {}
         for name, value in zip(CAMERA_PARAMETER_NAMES, response.values):
             values[name] = parameter_value_to_python(value)
+        values.update(self._camera_publisher_parameter_values())
+        return values
+
+    def _camera_publisher_parameter_values(self) -> dict[str, Any]:
+        try:
+            client = self._ensure_parameter_client(
+                self.camera_publisher_node_name
+            )
+            if not client.wait_for_services(timeout_sec=1.0):
+                return {}
+            response = self._wait_for_future(
+                client.get_parameters(CAMERA_PUBLISHER_PARAMETER_NAMES),
+                timeout_sec=2.0,
+                label='camera publisher parameters',
+            )
+        except Exception:
+            return {}
+        values = {}
+        for name, value in zip(
+            CAMERA_PUBLISHER_PARAMETER_NAMES, response.values
+        ):
+            values[name] = parameter_value_to_python(value)
         return values
 
     def _vision_parameter_values(self) -> dict[str, Any]:
@@ -2242,11 +2278,17 @@ class RoverWebGateway(Node):
         capabilities = self._camera_v4l2_capabilities(
             str(parameters.get('device') or '/dev/video0')
         )
+        ws_port = parameters.get('ws_port') or self.camera_ws_port
         return {
             'ok': True,
             'node_name': self.camera_node_name,
+            'publisher_node_name': self.camera_publisher_node_name,
             'parameters': parameters,
             'capabilities': capabilities,
+            'stream': {
+                'transport': 'websocket',
+                'ws_port': ws_port,
+            },
         }
 
     def vision_settings(self) -> dict[str, Any]:
@@ -2354,34 +2396,68 @@ class RoverWebGateway(Node):
                 continue
 
             value = payload[name]
-            if name in {'device', 'image_topic', 'compressed_image_topic', 'frame_id'}:
+            if name in {'device', 'frame_id'}:
                 updates.append(Parameter(name, value=str(value)))
-            elif name in {'width', 'height', 'jpeg_quality'}:
+            elif name in {'width', 'height', 'jpeg_quality', 'ws_port'}:
                 updates.append(Parameter(name, value=int(value)))
             elif name in {'fps', 'reconnect_interval_sec'}:
                 updates.append(Parameter(name, value=float(value)))
-            elif name in {'use_mjpeg', 'publish_raw', 'publish_compressed'}:
+            elif name == 'use_mjpeg':
                 updates.append(Parameter(name, value=bool(value)))
 
-        if not updates:
+        publisher_updates: list[Parameter] = []
+        for name in CAMERA_PUBLISHER_PARAMETER_NAMES:
+            if name not in payload:
+                continue
+            value = payload[name]
+            if name in {'image_topic', 'compressed_image_topic'}:
+                publisher_updates.append(Parameter(name, value=str(value)))
+            elif name in {'publish_raw', 'publish_compressed'}:
+                publisher_updates.append(Parameter(name, value=bool(value)))
+
+        if not updates and not publisher_updates:
             raise ValueError('No supported camera settings were provided')
 
-        client = self._ensure_parameter_client(self.camera_node_name)
-        if not client.wait_for_services(timeout_sec=1.0):
-            raise RuntimeError(
-                f'Camera parameter services are not available for {self.camera_node_name}'
+        failures: list[str] = []
+        if updates:
+            client = self._ensure_parameter_client(self.camera_node_name)
+            if not client.wait_for_services(timeout_sec=1.0):
+                raise RuntimeError(
+                    'Camera parameter services are not available for '
+                    f'{self.camera_node_name}'
+                )
+            response = self._wait_for_future(
+                client.set_parameters(updates),
+                timeout_sec=3.0,
+                label='camera parameter update',
             )
+            failures += [
+                result.reason.strip() or 'parameter update rejected'
+                for result in response.results
+                if not result.successful
+            ]
 
-        response = self._wait_for_future(
-            client.set_parameters(updates),
-            timeout_sec=3.0,
-            label='camera parameter update',
-        )
-        failures = [
-            result.reason.strip() or 'parameter update rejected'
-            for result in response.results
-            if not result.successful
-        ]
+        if publisher_updates:
+            client = self._ensure_parameter_client(
+                self.camera_publisher_node_name
+            )
+            if not client.wait_for_services(timeout_sec=1.0):
+                failures.append(
+                    'Republisher parameter services are not available for '
+                    f'{self.camera_publisher_node_name}'
+                )
+            else:
+                response = self._wait_for_future(
+                    client.set_parameters(publisher_updates),
+                    timeout_sec=3.0,
+                    label='camera publisher parameter update',
+                )
+                failures += [
+                    result.reason.strip() or 'parameter update rejected'
+                    for result in response.results
+                    if not result.successful
+                ]
+
         if failures:
             raise RuntimeError('; '.join(failures))
 

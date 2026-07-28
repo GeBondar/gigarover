@@ -26,6 +26,8 @@ setup(
     entry_points={
         'console_scripts': [
             'usb_camera_node = rover_camera.usb_camera_node:main',
+            'ws_image_publisher_node = '
+            'rover_camera.ws_image_publisher_node:main',
         ],
     },
 )

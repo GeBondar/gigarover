@@ -124,6 +124,10 @@ const state = {
   selectedCameraType: null,
   cameraTimer: null,
   cameraUrl: null,
+  cameraWs: null,
+  cameraWsRetry: null,
+  cameraBlobUrl: null,
+  cameraWsMeta: null,
   cameraSettings: null,
   cameraVisionSettings: null,
   cameraSettingsLastRefresh: 0,
@@ -1432,6 +1436,8 @@ async function callSelectedService() {
   }
 }
 
+const CAMERA_WS_SOURCE = '__camera_ws__';
+
 function renderCameraTopics() {
   const select = $('#camera-topic-select');
   const topics = safeArray(state.rosGraph?.image_topics).slice().sort((left, right) => {
@@ -1445,26 +1451,19 @@ function renderCameraTopics() {
     return String(left.name || '').localeCompare(String(right.name || ''));
   });
   select.innerHTML = '';
-  if (!topics.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'Нет image topics';
-    select.append(option);
-    state.selectedCameraTopic = null;
-    state.selectedCameraType = null;
-    stopCameraLoop();
-    $('#camera-empty').classList.remove('hidden');
-    return;
-  }
 
-  if (!topics.some((item) => item.name === state.selectedCameraTopic)) {
-    const preferred = topics.find((item) => {
-      const type = safeArray(item.types)[0] || '';
-      return type.includes('CompressedImage') || item.name?.endsWith('/compressed');
-    }) || topics[0];
-    state.selectedCameraTopic = preferred.name;
-    state.selectedCameraType = safeArray(preferred.types)[0] || '';
+  const wsOption = document.createElement('option');
+  wsOption.value = CAMERA_WS_SOURCE;
+  wsOption.dataset.type = 'websocket';
+  wsOption.textContent = 'Камера · WebSocket стрим (рекомендуется)';
+  select.append(wsOption);
+
+  const knownTopic = topics.some((item) => item.name === state.selectedCameraTopic);
+  if (!state.selectedCameraTopic || (!knownTopic && state.selectedCameraTopic !== CAMERA_WS_SOURCE)) {
+    state.selectedCameraTopic = CAMERA_WS_SOURCE;
+    state.selectedCameraType = 'websocket';
   }
+  wsOption.selected = state.selectedCameraTopic === CAMERA_WS_SOURCE;
 
   topics.forEach((item) => {
     const option = document.createElement('option');
@@ -1503,8 +1502,8 @@ function setCameraSettingsForm(parameters = {}) {
   $('#camera-setting-frame-id').value = parameters.frame_id || 'camera_optical_frame';
   $('#camera-setting-image-topic').value = parameters.image_topic || '/image_raw';
   $('#camera-setting-compressed-topic').value = parameters.compressed_image_topic || '/image_raw/compressed';
-  $('#camera-setting-width').value = String(parameters.width ?? 1280);
-  $('#camera-setting-height').value = String(parameters.height ?? 720);
+  $('#camera-setting-width').value = String(parameters.width ?? 640);
+  $('#camera-setting-height').value = String(parameters.height ?? 480);
   $('#camera-setting-fps').value = String(parameters.fps ?? 30);
   $('#camera-setting-jpeg-quality').value = String(parameters.jpeg_quality ?? 85);
   $('#camera-setting-use-mjpeg').checked = Boolean(parameters.use_mjpeg ?? true);
@@ -1839,8 +1838,8 @@ function cameraSettingsPayloadFromForm() {
     frame_id: $('#camera-setting-frame-id').value.trim(),
     image_topic: $('#camera-setting-image-topic').value.trim(),
     compressed_image_topic: $('#camera-setting-compressed-topic').value.trim(),
-    width: Number($('#camera-setting-width').value || '1280'),
-    height: Number($('#camera-setting-height').value || '720'),
+    width: Number($('#camera-setting-width').value || '640'),
+    height: Number($('#camera-setting-height').value || '480'),
     fps: Number($('#camera-setting-fps').value || '30'),
     jpeg_quality: Number($('#camera-setting-jpeg-quality').value || '85'),
     use_mjpeg: $('#camera-setting-use-mjpeg').checked,
@@ -1877,12 +1876,61 @@ function applyCameraPreset(width, height, fps) {
 
 async function refreshCameraStatus() {
   if (!state.selectedCameraTopic || !state.selectedCameraType) return;
+  if (state.selectedCameraTopic === CAMERA_WS_SOURCE) return;
   try {
     const info = await api(`/api/camera/status?topic=${encodeURIComponent(state.selectedCameraTopic)}&type=${encodeURIComponent(state.selectedCameraType)}`);
     return info;
   } catch (error) {
     return null;
   }
+}
+
+function cameraWsPort() {
+  return Number(
+    state.cameraSettings?.stream?.ws_port
+    || state.cameraSettings?.parameters?.ws_port
+    || state.config?.camera_ws_port
+    || 8766,
+  );
+}
+
+function startCameraWebSocket() {
+  stopCameraLoop();
+  const url = `ws://${window.location.hostname}:${cameraWsPort()}`;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'blob';
+  state.cameraWs = ws;
+  const frame = $('#camera-frame');
+
+  ws.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      try {
+        state.cameraWsMeta = JSON.parse(event.data);
+      } catch (error) {
+        /* ignore malformed metadata */
+      }
+      return;
+    }
+    const nextUrl = URL.createObjectURL(event.data);
+    const previousUrl = state.cameraBlobUrl;
+    state.cameraBlobUrl = nextUrl;
+    frame.onload = () => {
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+    };
+    frame.src = nextUrl;
+    $('#camera-empty').classList.add('hidden');
+  };
+
+  ws.onclose = () => {
+    if (state.cameraWs !== ws) return;
+    state.cameraWs = null;
+    $('#camera-empty').classList.remove('hidden');
+    state.cameraWsRetry = window.setTimeout(() => {
+      if (state.selectedCameraTopic === CAMERA_WS_SOURCE) {
+        startCameraWebSocket();
+      }
+    }, 1500);
+  };
 }
 
 function startCameraLoop() {
@@ -1903,6 +1951,23 @@ function stopCameraLoop() {
     window.clearInterval(state.cameraTimer);
     state.cameraTimer = null;
   }
+  if (state.cameraWsRetry) {
+    window.clearTimeout(state.cameraWsRetry);
+    state.cameraWsRetry = null;
+  }
+  if (state.cameraWs) {
+    const ws = state.cameraWs;
+    state.cameraWs = null;
+    try {
+      ws.close();
+    } catch (error) {
+      /* already closed */
+    }
+  }
+  if (state.cameraBlobUrl) {
+    URL.revokeObjectURL(state.cameraBlobUrl);
+    state.cameraBlobUrl = null;
+  }
   $('#camera-frame').src = '';
   state.cameraUrl = null;
 }
@@ -1917,6 +1982,10 @@ async function connectCamera() {
     return;
   }
   await recordActivity('Выбран источник камеры', { topic: state.selectedCameraTopic, type: state.selectedCameraType }, 'camera');
+  if (state.selectedCameraTopic === CAMERA_WS_SOURCE) {
+    startCameraWebSocket();
+    return;
+  }
   const info = await refreshCameraStatus();
   if (!info) {
     $('#camera-empty').classList.remove('hidden');
@@ -4463,7 +4532,14 @@ function refreshPeriodicData() {
   if (state.page === 'diagnostics') {
     refreshActivity();
   }
-  if (state.page === 'camera' && state.selectedCameraTopic && state.selectedCameraType && !state.cameraTimer) {
+  if (
+    state.page === 'camera'
+    && state.selectedCameraTopic
+    && state.selectedCameraType
+    && !state.cameraTimer
+    && !state.cameraWs
+    && !state.cameraWsRetry
+  ) {
     connectCamera();
   }
   if (state.page === 'lights' && state.selectedLedStripTopic && state.selectedLedStripType && !state.ledStripTimer) {

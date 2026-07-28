@@ -13,8 +13,17 @@
 ROS 2: поднимает UDP-API на 127.0.0.1:8460 с протоколом rover-motord, поэтому
 штатный vesc_bridge_node (rover-bringup, base_driver.type: vesc) шлёт /cmd_vel
 сюда без каких-либо правок. Арбитраж: веб-джойстик перехватывает у ros,
-у каждого источника свой deadman. Телеметрии (энкодеры/батарея) в USB-режиме
-нет — мост публикует /wheel/encoders c valid=false (одометрия стоит).
+у каждого источника свой deadman.
+
+Телеметрия/одометрия: в TX-контуре по кругу опрашиваются все 4 VESC
+(COMM_GET_VALUES_SELECTIVE: eRPM, тахометр, v_in; локальный — напрямую,
+остальные — через COMM_FORWARD_CAN). Опрос строго последовательный (один
+мотор за тик, ~12.5 Гц на колесо): на этом ровере локальный VESC и один из
+удалённых делят CAN ID 32, поэтому по controller_id ответы не различить —
+принадлежность определяет порядок опроса. Когда раскладка колёс полностью
+назначена и все 4 колеса дали свежий сэмпл, в UDP-state растёт enc.seq —
+мост публикует /wheel/encoders valid=true, одометрия работает (семантика
+блока enc идентична rover-motord).
 """
 import argparse
 import glob
@@ -34,7 +43,25 @@ COMM_FW_VERSION = 0
 COMM_SET_CURRENT = 6
 COMM_SET_RPM = 8
 COMM_FORWARD_CAN = 34
+COMM_GET_VALUES_SELECTIVE = 50
 COMM_PING_CAN = 62
+
+# маска GET_VALUES_SELECTIVE: rpm(f32) + v_in(f16/10) + tachometer(i32)
+# + controller_id(u8). ВНИМАНИЕ: по controller_id матчить нельзя — на этом
+# ровере локальный VESC и один из удалённых оба отвечают с ID 32 (дубликат на
+# шине). Поэтому опрос строго последовательный: один мотор за тик, сброс
+# приёмного буфера перед запросом, синхронное ожидание ответа — принадлежность
+# ответа определяет порядок, controller_id остаётся только санити-проверкой
+# для удалённых.
+TELEM_MASK = (1 << 7) | (1 << 8) | (1 << 13) | (1 << 17)
+TELEM_FRESH_S = 1.0    # свежесть сэмпла колеса для valid/link
+POLL_WINDOW_REMOTE_S = 0.012   # ожидание ответа через CAN-forward
+POLL_WINDOW_LOCAL_S = 0.006    # локальный отвечает без CAN-хопа, окно уже,
+                               # чтобы не поймать запоздавший чужой ответ
+TACHO_JUMP_MAX = 2000  # физически невозможный скачок тахометра за сэмпл
+CELL_EMPTY_V = 3.3
+CELL_FULL_V = 4.2
+BATTERY_CELLS = 6
 
 LOCAL = "local"  # ключ VESC, висящего на USB
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usb_motors.json")
@@ -56,12 +83,14 @@ SRC_PRIORITY = {"web": 2, "ros": 1}
 STATE_HZ = 20
 SUB_TTL_S = 3.0
 
-# геометрия GIGAROVER (как в gigarover_v1.yaml): vx/wz -> eRPM на борт
-WHEEL_RADIUS_M = 0.0825
+# геометрия GIGAROVER: vx/wz -> eRPM на борт.
+# ОТКАЛИБРОВАНО 28.07.2026 ручным прокатом на 1.00 м: 571.5 отсчёта
+# тахометра на метр => eRPM = counts/s * 10 => 5715 eRPM на м/с (паспортные
+# «7 полюсов x ремень 3.0» давали 2431 — ошибка 2.35x, привод фактически
+# мотор 7490 + редуктор). Согласовано с encoders в gigarover_v1.yaml.
 TRACK_WIDTH_M = 0.40
-GEAR_RATIO = 3.0
-POLE_PAIRS = 7
-ERPM_PER_MPS = 60.0 * POLE_PAIRS * GEAR_RATIO / (2.0 * 3.141592653589793 * WHEEL_RADIUS_M)
+COUNTS_PER_METER = 571.5
+ERPM_PER_MPS = 10.0 * COUNTS_PER_METER
 
 
 def crc16(data: bytes) -> int:
@@ -94,6 +123,42 @@ def read_packet(ser: serial.Serial, timeout: float = 1.0):
             if crc16(payload) == struct.unpack(">H", rest[n:n + 2])[0]:
                 return payload
     return None
+
+
+def extract_packets(buf: bytes):
+    """Достаёт из потока все целые пакеты (короткий формат). -> (payloads, хвост)"""
+    out = []
+    while True:
+        i = buf.find(b"\x02")
+        if i < 0:
+            return out, b""
+        buf = buf[i:]
+        if len(buf) < 2:
+            return out, buf
+        n = buf[1]
+        total = 2 + n + 3
+        if len(buf) < total:
+            return out, buf
+        payload = buf[2:2 + n]
+        if buf[total - 1] == 3 and \
+                crc16(payload) == struct.unpack(">H", buf[2 + n:2 + n + 2])[0]:
+            out.append(payload)
+            buf = buf[total:]
+        else:
+            buf = buf[1:]              # не пакет — сдвиг на байт и ресинк
+
+
+def parse_get_values(payload: bytes):
+    """[50][mask u32][rpm i32/1][v_in i16/10][tacho i32][controller_id u8]
+    -> (cid, erpm, v_in, tacho) | None"""
+    if len(payload) < 16 or payload[0] != COMM_GET_VALUES_SELECTIVE:
+        return None
+    if struct.unpack(">I", payload[1:5])[0] != TELEM_MASK:
+        return None
+    erpm = struct.unpack(">i", payload[5:9])[0]
+    v_in = struct.unpack(">h", payload[9:11])[0] / 10.0
+    tacho = struct.unpack(">i", payload[11:15])[0]
+    return payload[15], float(erpm), v_in, tacho
 
 
 def resolve_port(port: str) -> str:
@@ -146,6 +211,15 @@ class Drive:
         self.load_cfg()
         self.out = {}                      # сглаженная скорость по ключу мотора
         self.subs = {}                     # addr -> время окончания подписки
+        # телеметрия: ключ мотора -> {'erpm','tacho','v_in','t'}
+        self.tel = {}
+        self.enc_seq = 0
+        self.enc_last_t = {}               # ключ -> t сэмпла, ушедшего в прошлый seq
+        self.enc_counts = [0, 0, 0, 0]
+        self.enc_mps = [0.0, 0.0, 0.0, 0.0]
+        self.enc_newest_t = 0.0
+        self.local_cid = None              # CAN ID локального VESC (из его ответов)
+        self.poll_i = 0
         self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp.bind((UDP_HOST, UDP_PORT))
         threading.Thread(target=self._loop, daemon=True).start()
@@ -232,20 +306,142 @@ class Drive:
             return self.known_ids
         return None
 
+    # ---------- телеметрия (одометрия) ----------
+    def _send_get_values(self, key):
+        p = bytes([COMM_GET_VALUES_SELECTIVE]) + struct.pack(">I", TELEM_MASK)
+        if key != LOCAL:
+            p = bytes([COMM_FORWARD_CAN, int(key)]) + p
+        self.ser.write(frame(p))
+
+    def _poll_telemetry(self, key) -> bool:
+        """Опрос одного мотора: сброс приёма -> запрос -> синхронное ожидание.
+        Вызывается только из TX-контура (ser_lock уже взят)."""
+        ser = self.ser
+        if ser.in_waiting:
+            ser.read(ser.in_waiting)       # хвосты прошлых/чужих ответов
+        self._send_get_values(key)
+        expected = None if key == LOCAL else int(key)
+        window = POLL_WINDOW_LOCAL_S if key == LOCAL else POLL_WINDOW_REMOTE_S
+        old_timeout = ser.timeout
+        ser.timeout = 0.003
+        buf = b""
+        try:
+            deadline = time.time() + window
+            while time.time() < deadline:
+                chunk = ser.read(64)
+                if not chunk:
+                    continue
+                buf += chunk
+                packets, buf = extract_packets(buf)
+                for payload in packets:
+                    parsed = parse_get_values(payload)
+                    if parsed is None:
+                        continue
+                    cid, erpm, v_in, tacho = parsed
+                    if expected is not None and cid != expected:
+                        continue           # запоздавший чужой ответ
+                    if key == LOCAL:
+                        self._note_local_cid(cid)
+                    prev = self.tel.get(key)
+                    if prev is not None and abs(tacho - prev["tacho"]) > TACHO_JUMP_MAX:
+                        return False       # мусорный сэмпл — пропускаем
+                    with self.lock:
+                        self.tel[key] = {"erpm": erpm, "tacho": tacho,
+                                         "v_in": v_in, "t": time.time()}
+                    return True
+            return False
+        finally:
+            ser.timeout = old_timeout
+
+    def _note_local_cid(self, cid: int):
+        if self.local_cid == cid:
+            return
+        self.local_cid = cid
+        if cid in self.known_ids:
+            print(f"ВНИМАНИЕ: CAN ID локального VESC ({cid}) совпадает с "
+                  f"удалённым на шине — дубликат ID! Телеметрия матчится по "
+                  f"порядку опроса, но ID стоит развести в VESC Tool.")
+
+    def _pos_key_map(self):
+        m = {v["position"]: k for k, v in self.config.items()}
+        return m if all(p in m for p in POSITIONS) else None
+
+    def _update_enc(self):
+        """Как в rover-motord: сэмпл готов, когда ВСЕ 4 колеса дали новую
+        телеметрию с прошлого сэмпла — тогда enc_seq растёт и мост публикует
+        WheelEncoders (порядок FL,FR,RL,RR, знак = forward_sign)."""
+        m = self._pos_key_map()
+        if m is None:
+            return
+        with self.lock:
+            keys = [m[p] for p in POSITIONS]
+            tels = [self.tel.get(k) for k in keys]
+            if any(t is None for t in tels):
+                return
+            if not all(t["t"] > self.enc_last_t.get(k, 0.0)
+                       for k, t in zip(keys, tels)):
+                return
+            self.enc_seq += 1
+            counts, mps = [], []
+            for k, t in zip(keys, tels):
+                self.enc_last_t[k] = t["t"]
+                sign = self.config[k]["forward_sign"]
+                counts.append(int(sign) * t["tacho"])
+                mps.append(sign * t["erpm"] / ERPM_PER_MPS)
+            self.enc_counts = counts
+            self.enc_mps = mps
+            self.enc_newest_t = max(t["t"] for t in tels)
+
     # ---------- UDP-API (протокол rover-motord, ходит vesc_bridge_node) ----------
     def _state_snapshot(self) -> dict:
+        now = time.time()
+        m = {v["position"]: k for k, v in self.config.items()}
+        full = all(p in m for p in POSITIONS)
         with self.lock:
             src = self.active_src if self.sources else None
             cmd = self.sources.get(src) if src else None
+            tel = {k: dict(t) for k, t in self.tel.items()}
+            enc_seq = self.enc_seq
+            counts = list(self.enc_counts)
+            mps = [round(v, 4) for v in self.enc_mps]
+            newest = self.enc_newest_t
+        fresh = {k: (now - t["t"]) <= TELEM_FRESH_S for k, t in tel.items()}
+        valid = full and all(fresh.get(m[p], False) for p in POSITIONS)
+        wheels = []
+        if full:
+            for p in POSITIONS:
+                k = m[p]
+                t = tel.get(k)
+                wheels.append({
+                    "can_id": ("usb" if k == LOCAL else int(k)),
+                    "fresh": bool(t and fresh.get(k)),
+                    "erpm": t["erpm"] if t else 0.0,
+                    "v_in": t["v_in"] if t else 0.0,
+                    "tacho": t["tacho"] if t else 0,
+                })
+        volts = [t["v_in"] for k, t in tel.items() if fresh.get(k) and t["v_in"] > 0.0]
+        voltage = sum(volts) / len(volts) if volts else 0.0
+        percentage = None
+        if volts:
+            frac = ((voltage / BATTERY_CELLS - CELL_EMPTY_V)
+                    / (CELL_FULL_V - CELL_EMPTY_V))
+            percentage = round(max(0.0, min(1.0, frac)), 3)
+        n_fresh = sum(1 for v in fresh.values() if v)
+        link = "ok" if valid else ("degraded" if n_fresh else "down")
         return {
             "type": "state", "v": 1,
-            "link": {"state": "ok"},        # USB-порт открыт, телеметрии по CAN нет
+            "link": {"state": link},
             "drive": {"src": src, "deadman": src is None,
                       "command": {"left_erpm": cmd["l"] if cmd else 0.0,
                                   "right_erpm": cmd["r"] if cmd else 0.0}},
-            "enc": {"valid": False, "counts": [0] * 4, "mps": [0.0] * 4,
-                    "seq": 0, "age_ms": None},
-            "battery": {}, "wheels": [],
+            "enc": {"valid": valid, "counts": counts, "mps": mps,
+                    "seq": enc_seq,
+                    "age_ms": (round((now - newest) * 1000.0)
+                               if enc_seq > 0 else None)},
+            "battery": {"present": bool(volts), "voltage": round(voltage, 2),
+                        "percentage": percentage, "cells": BATTERY_CELLS,
+                        "input_current": 0.0},
+            "wheels": wheels,
         }
 
     def _udp_loop(self):
@@ -362,8 +558,13 @@ class Drive:
                     else:
                         self._send_release(key)
                 self.tx_count += 1
-                if self.ser.in_waiting:
-                    self.ser.read(self.ser.in_waiting)
+                # опрос телеметрии: один мотор за тик по кругу (~12.5 Гц на
+                # колесо); строго последовательно из-за дубликата CAN ID
+                keys = self.motor_keys()
+                if keys:
+                    self._poll_telemetry(keys[self.poll_i % len(keys)])
+                    self.poll_i += 1
+                self._update_enc()
             except serial.SerialException as e:
                 print(f"serial: {e} — переоткрываю порт")
                 try:

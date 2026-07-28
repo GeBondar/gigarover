@@ -214,6 +214,21 @@ def launch_setup(context):
             camera_params.get('frame_id', 'camera_optical_frame'),
         )
         camera_params['use_sim_time'] = use_sim_time
+        ws_port = int(camera_params.get('ws_port', 8766))
+        republisher_params = {
+            'ws_url': f'ws://127.0.0.1:{ws_port}',
+            'image_topic': camera_params.pop('image_topic', '/image_raw'),
+            'compressed_image_topic': camera_params.pop(
+                'compressed_image_topic', '/image_raw/compressed'
+            ),
+            'frame_id': camera_params['frame_id'],
+            'publish_raw': camera_params.pop('publish_raw', True),
+            'publish_compressed': camera_params.pop('publish_compressed', True),
+            'reconnect_interval_sec': camera_params.get(
+                'reconnect_interval_sec', 2.0
+            ),
+            'use_sim_time': use_sim_time,
+        }
         actions.append(Node(
             package='rover_camera',
             executable='usb_camera_node',
@@ -227,11 +242,23 @@ def launch_setup(context):
             },
             parameters=[camera_params],
         ))
+        # Feeds /image_raw + /image_raw/compressed from the camera WebSocket,
+        # only while somebody actually subscribes.
+        actions.append(Node(
+            package='rover_camera',
+            executable='ws_image_publisher_node',
+            name='ws_image_publisher_node',
+            output='screen',
+            additional_env={'PYTHONNOUSERSITE': '1'},
+            parameters=[republisher_params],
+        ))
 
     if use_camera and use_vision:
         vision_params['input_topic'] = topics.get(
             'image_raw',
-            vision_params.get('input_topic', camera_params['image_topic']),
+            vision_params.get(
+                'input_topic', republisher_params['image_topic']
+            ),
         )
         vision_params['frame_id'] = frames.get(
             'camera',
