@@ -10,9 +10,12 @@ Conflicts=rover-setup-web.service rover-can-teleop.service
 
 [Service]
 # Type=notify + WatchdogSec: демон шлёт READY/WATCHDOG сам (sd_notify в
-# motord.py); зависший процесс systemd перезапустит.
+# motord.py); зависший процесс systemd перезапустит. NotifyAccess=all
+# обязателен: WATCHDOG=1 уходит из управляющего ПОТОКА, а ядро подставляет
+# в креды датаграммы TID потока — с NotifyAccess=main systemd такие
+# уведомления отбрасывает и убивает службу по вотчдогу.
 Type=notify
-NotifyAccess=main
+NotifyAccess=all
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/rover_ws/tools/motord

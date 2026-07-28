@@ -60,6 +60,9 @@ base_driver:
   wheel_can_ids: [57, 25, 92, 71]
   wheel_inverts: [true, true, false, false]
   max_erpm: 4000
+  # Подпор выше foc_sl_erpm=1400 (детекция 28.07): ниже ~1400 sensorless
+  # ловит зеркальный захват (FR крутился в обратную сторону на 1215).
+  min_erpm: 1500
   max_wheel_speed_mps: 1.6
   max_wheel_accel_mps2: 1.5
   idle_mode: coast

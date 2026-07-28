@@ -77,32 +77,28 @@
   .wheel .sub b { color: var(--text); font-weight: 550; }
 
   #joysection { display: flex; flex-direction: column; gap: 10px; }
-  #joywrap { display: flex; justify-content: center; padding: 4px 0; }
-  #joy {
-    --size: min(84vw, 44vh, 420px);
-    width: var(--size); height: var(--size); border-radius: 50%;
-    background: radial-gradient(circle at 50% 45%, var(--card2), var(--card) 75%);
-    border: 1px solid var(--line); position: relative; touch-action: none;
-    box-shadow: inset 0 0 30px rgba(0,0,0,.45);
+  /* Танковая крестовина: только чистые команды — вперёд/назад/влево/вправо,
+     одна за раз (кнопки взаимоисключающие), держишь — едет. */
+  #dpad {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr); gap: 10px;
+    width: min(84vw, 52vh, 420px); aspect-ratio: 1 / 1; margin: 0 auto;
+    padding: 4px 0; touch-action: none;
   }
-  #joy::before, #joy::after {
-    content: ''; position: absolute; background: var(--line);
+  .dbtn {
+    border-radius: 18px; border: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--card2), var(--card));
+    color: var(--text); font-size: 30px; line-height: 1.1;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    cursor: pointer; padding: 0;
   }
-  #joy::before { left: 50%; top: 6%; bottom: 6%; width: 1px; }
-  #joy::after { top: 50%; left: 6%; right: 6%; height: 1px; }
-  #knob {
-    position: absolute; width: 34%; height: 34%; border-radius: 50%;
-    left: 33%; top: 33%;
-    background: radial-gradient(circle at 38% 32%, #6db4ff, var(--accent) 70%);
-    box-shadow: 0 4px 14px rgba(0,0,0,.55); border: 1px solid #7cb8ff;
-    transition: left .12s, top .12s; will-change: left, top; z-index: 2;
+  .dbtn small { display: block; font-size: 11px; color: var(--muted); }
+  .dbtn.active {
+    background: var(--accent); border-color: #7cb8ff; color: #04121f;
+    box-shadow: 0 0 18px rgba(77,163,255,.5);
   }
-  #joy.active #knob { transition: none; }
-  .joyhint {
-    position: absolute; color: var(--muted); font-size: 10px; z-index: 1;
-    left: 50%; transform: translateX(-50%);
-  }
-  .joyhint.top { top: 8px; } .joyhint.bottom { bottom: 8px; }
+  .dbtn.active small { color: #04121f; }
+  #dstop { font-size: 24px; color: #ffb3b3; border-color: #7a2a2a; }
 
   .slider {
     background: var(--card); border: 1px solid var(--line); border-radius: 12px;
@@ -171,12 +167,16 @@
   </div>
 
   <div id="joysection">
-    <div id="joywrap">
-      <div id="joy">
-        <span class="joyhint top">вперёд</span>
-        <span class="joyhint bottom">назад</span>
-        <div id="knob"></div>
-      </div>
+    <div id="dpad">
+      <div></div>
+      <button class="dbtn" data-dir="up" type="button">▲<small>вперёд</small></button>
+      <div></div>
+      <button class="dbtn" data-dir="left" type="button">◀<small>влево</small></button>
+      <button class="dbtn" id="dstop" type="button">■<small>стоп</small></button>
+      <button class="dbtn" data-dir="right" type="button">▶<small>вправо</small></button>
+      <div></div>
+      <button class="dbtn" data-dir="down" type="button">▼<small>назад</small></button>
+      <div></div>
     </div>
   </div>
 </div>
@@ -189,9 +189,7 @@ const SEND_PERIOD_MS = 100;      // 10 Гц; deadman сервера 0.5 с
 const POLL_PERIOD_MS = 1000;
 
 const state = {
-  nx: 0, ny: 0,                  // джойстик: право+ / верх+
-  keys: new Set(),
-  joyActive: false,
+  keys: new Set(),               // активное направление: up/down/left/right
   lastSentZero: true,
   offline: false,
   wakeLock: null,
@@ -227,12 +225,10 @@ async function post(path, body) {
 }
 
 function currentCommand() {
-  // клавиатура поверх джойстика (что активнее, то и рулит)
-  let nx = state.nx, ny = state.ny;
-  if (!state.joyActive && state.keys.size > 0) {
-    ny = (state.keys.has('up') ? 1 : 0) - (state.keys.has('down') ? 1 : 0);
-    nx = (state.keys.has('right') ? 1 : 0) - (state.keys.has('left') ? 1 : 0);
-  }
+  // Танк: только чистые команды. вперёд/назад — оба борта вперёд/назад,
+  // влево/вправо — борта в противофазе (как в развороте, он работает идеально).
+  const ny = (state.keys.has('up') ? 1 : 0) - (state.keys.has('down') ? 1 : 0);
+  const nx = (state.keys.has('right') ? 1 : 0) - (state.keys.has('left') ? 1 : 0);
   const maxLin = parseFloat($('#lin').value);
   const maxAng = parseFloat($('#ang').value);
   // ROS-конвенция: angular.z > 0 — поворот влево (CCW), поэтому право = минус.
@@ -250,8 +246,8 @@ async function sendDrive() {
 }
 
 async function sendStop(hard) {
-  state.nx = 0; state.ny = 0; state.keys.clear();
-  drawKnob(0, 0);
+  state.keys.clear();
+  syncDpad();
   try {
     if (hard) await post('/api/stop', {});
     await post('/api/drive/stop', {});
@@ -261,59 +257,47 @@ async function sendStop(hard) {
 
 setInterval(sendDrive, SEND_PERIOD_MS);
 
-// ---- джойстик --------------------------------------------------------------
-const joy = $('#joy'), knob = $('#knob');
-
-function drawKnob(nx, ny) {
-  // knob 34% — центр смещается максимум на 33% от размера поля
-  const range = 33;
-  knob.style.left = (33 + nx * range) + '%';
-  knob.style.top = (33 - ny * range) + '%';
+// ---- танковая крестовина ---------------------------------------------------
+function syncDpad() {
+  document.querySelectorAll('#dpad .dbtn[data-dir]').forEach((b) => {
+    b.classList.toggle('active', state.keys.has(b.dataset.dir));
+  });
 }
 
-function joyVector(ev) {
-  const rect = joy.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-  let nx = (ev.clientX - cx) / (rect.width / 2);
-  let ny = (cy - ev.clientY) / (rect.height / 2);
-  const len = Math.hypot(nx, ny);
-  if (len > 1) { nx /= len; ny /= len; }
-  if (Math.abs(nx) < 0.07) nx = 0;   // мёртвая зона по осям
-  if (Math.abs(ny) < 0.07) ny = 0;
-  return { nx, ny };
-}
-
-joy.addEventListener('pointerdown', (ev) => {
-  ev.preventDefault();
-  joy.setPointerCapture(ev.pointerId);
-  joy.classList.add('active');
-  state.joyActive = true;
-  const v = joyVector(ev);
-  state.nx = v.nx; state.ny = v.ny;
-  drawKnob(v.nx, v.ny);
+function pressDir(dir) {
+  state.keys.clear();              // чисто: одна команда за раз
+  state.keys.add(dir);
+  syncDpad();
   sendDrive();
   acquireWakeLock();
-});
-joy.addEventListener('pointermove', (ev) => {
-  if (!state.joyActive) return;
-  ev.preventDefault();
-  const v = joyVector(ev);
-  state.nx = v.nx; state.ny = v.ny;
-  drawKnob(v.nx, v.ny);
-});
-function joyRelease(ev) {
-  if (!state.joyActive) return;
-  ev.preventDefault();
-  state.joyActive = false;
-  joy.classList.remove('active');
-  state.nx = 0; state.ny = 0;
-  drawKnob(0, 0);
-  sendStop(false);
 }
-joy.addEventListener('pointerup', joyRelease);
-joy.addEventListener('pointercancel', joyRelease);
 
-// ---- клавиатура ------------------------------------------------------------
+function releaseDir(dir) {
+  state.keys.delete(dir);
+  syncDpad();
+  if (state.keys.size === 0) sendStop(false); else sendDrive();
+}
+
+document.querySelectorAll('#dpad .dbtn[data-dir]').forEach((btn) => {
+  const dir = btn.dataset.dir;
+  btn.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    try {
+      btn.setPointerCapture(ev.pointerId);
+    } catch (e) { /* захват не критичен */ }
+    pressDir(dir);
+  });
+  const release = (ev) => { ev.preventDefault(); releaseDir(dir); };
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('contextmenu', (ev) => ev.preventDefault());
+});
+$('#dstop').addEventListener('pointerdown', (ev) => {
+  ev.preventDefault();
+  doHardStop();
+});
+
+// ---- клавиатура (те же чистые команды) -------------------------------------
 const KEYMAP = {
   KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
   KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
@@ -324,14 +308,12 @@ window.addEventListener('keydown', (ev) => {
   const dir = KEYMAP[ev.code];
   if (!dir) return;
   ev.preventDefault();
-  state.keys.add(dir);
-  sendDrive();
+  pressDir(dir);
 });
 window.addEventListener('keyup', (ev) => {
   const dir = KEYMAP[ev.code];
   if (!dir) return;
-  state.keys.delete(dir);
-  if (state.keys.size === 0) sendStop(false); else sendDrive();
+  releaseDir(dir);
 });
 
 // ---- STOP ------------------------------------------------------------------
