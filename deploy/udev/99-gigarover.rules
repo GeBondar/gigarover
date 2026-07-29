@@ -1,7 +1,9 @@
-# GIGAROVER: USB-CAN адаптер на CH340 (протокол seeedstudio) — шина VESC.
-# Стабильный симлинк /dev/rover_can, доступ без root, и запрет ModemManager
-# опрашивать порт (иначе он "дёргает" адаптер при подключении).
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="rover_can", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
-# Запрет USB-автосна для адаптера: runtime-suspend посреди обмена даёт
-# провалы приёма/передачи на ch341.
+# GIGAROVER: IMU Yahboom YB-MRA02 на CH340 — стабильный симлинк /dev/rover_imu,
+# доступ без root, запрет ModemManager опрашивать порт.
+# История: до 28.07.2026 на CH340 жил USB-CAN адаптер Seeed (симлинк
+# /dev/rover_can, владелец rover-motord). Адаптер умер, привод переехал на
+# USB-VESC (rover-usb-teleop, /dev/ttyACM0). IMU — тоже CH340 (1a86:7523),
+# поэтому старое правило перехватывало её порт и ломало discovery.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="rover_imu", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
+# Запрет USB-автосна: runtime-suspend посреди обмена даёт провалы на ch341.
 ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", ATTR{power/control}="on"
